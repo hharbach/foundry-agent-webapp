@@ -12,6 +12,8 @@ $clientId = azd env get-value ENTRA_SPA_CLIENT_ID 2>$null
 $tenantId = azd env get-value ENTRA_TENANT_ID 2>$null
 $backendClientId = azd env get-value ENTRA_BACKEND_CLIENT_ID 2>$null
 $appInsightsConnStr = (azd env get-value APPLICATIONINSIGHTS_FRONTEND_CONNECTION_STRING 2>&1) | Where-Object { $_ -notmatch 'ERROR' } | Select-Object -First 1
+# Escape semicolons for ACR cloud builds — unescaped semicolons are interpreted as shell command separators
+if ($appInsightsConnStr) { $appInsightsConnStrEscaped = $appInsightsConnStr -replace ';', '\;' } else { $appInsightsConnStrEscaped = '' }
 $acrName = azd env get-value AZURE_CONTAINER_REGISTRY_NAME 2>$null
 $resourceGroup = azd env get-value AZURE_RESOURCE_GROUP_NAME 2>$null
 $containerApp = azd env get-value AZURE_CONTAINER_APP_NAME 2>$null
@@ -63,7 +65,7 @@ try {
         Write-Host "Using ACR cloud build (3-5 min)..." -ForegroundColor Yellow
         $acrBuildArgs = @("--build-arg", "ENTRA_SPA_CLIENT_ID=$clientId", "--build-arg", "ENTRA_TENANT_ID=$tenantId")
         if ($backendClientId) { $acrBuildArgs += @("--build-arg", "ENTRA_BACKEND_CLIENT_ID=$backendClientId") }
-        if ($appInsightsConnStr) { $acrBuildArgs += @("--build-arg", "APPLICATIONINSIGHTS_FRONTEND_CONNECTION_STRING=$appInsightsConnStr") }
+        if ($appInsightsConnStrEscaped) { $acrBuildArgs += @("--build-arg", "APPLICATIONINSIGHTS_FRONTEND_CONNECTION_STRING=$appInsightsConnStrEscaped") }
         $buildOutput = az acr build --registry $acrName --image "web:$imageTag" `
             @acrBuildArgs `
             --file deployment/docker/frontend.Dockerfile . `

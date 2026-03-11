@@ -3,11 +3,28 @@
   flex-wrap: wrap;
   gap: 6px;
   padding: 4px 12px 8px;
+  align-items: center;
 }
 
 .label {
   font-size: 11px;
   color: var(--colorNeutralForeground3);
   margin-right: 4px;
-  align-self: center;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 12px;
+  background-color: var(--colorNeutralBackground3);
+  border: 1px solid var(--colorNeutralStroke2);
+}
+
+.dismissButton {
+  min-width: unset;
+  padding: 0;
+  height: 20px;
+  width: 20px;
 }

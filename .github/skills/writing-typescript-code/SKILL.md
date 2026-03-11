@@ -179,7 +179,7 @@ npm ci  # Fails if lock file is out of sync with package.json
 
 | Component | Purpose |
 |-----------|---------|
-| `AgentPreview.tsx` | Container wiring chat state to controlled `ChatInterface` |
+| `AgentChat.tsx` | Container wiring chat state to controlled `ChatInterface` |
 | `ChatInterface.tsx` | Stateless controlled UI; renders messages, input, errors, BuiltWithBadge |
 | `chat/AssistantMessage.tsx` | Memoized assistant message with streaming + citation footnotes |
 | `chat/UserMessage.tsx` | Memoized user message with image thumbnail previews |
@@ -236,7 +236,7 @@ Key patterns:
 1. **Extend state**: Add discriminated action to `AppAction` union in `frontend/src/types/appState.ts`
 2. **Handle in reducer**: Update `frontend/src/reducers/appReducer.ts` (keep pure, no side effects)
 3. **Create service method**: Add to `ChatService` if network interaction needed
-4. **Wire container**: Update `AgentPreview.tsx` to dispatch actions
+4. **Wire container**: Update `AgentChat.tsx` to dispatch actions
 5. **Update UI**: Pass callbacks to controlled component
 
 ## Project-Specific: Accessibility Checklist

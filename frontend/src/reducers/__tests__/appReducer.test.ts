@@ -740,7 +740,7 @@ describe('appReducer', () => {
       expect(assistantMsg?.maxRetries).toBe(3);
     });
 
-    it('sets status to streaming and disables input', () => {
+    it('sets status to streaming and keeps input enabled', () => {
       const state = createInitialState();
       state.chat.messages = [
         createMockMessage({ id: 'assistant-1', role: 'assistant', content: '' }),
@@ -754,7 +754,7 @@ describe('appReducer', () => {
       });
 
       expect(result.chat.status).toBe('streaming');
-      expect(result.ui.chatInputEnabled).toBe(false);
+      expect(result.ui.chatInputEnabled).toBe(true);
       expect(result.chat.error).toBeNull();
     });
 

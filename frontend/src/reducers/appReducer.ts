@@ -322,7 +322,7 @@ export const appReducer = (state: AppState, action: AppAction): AppState => {
         },
         ui: {
           ...state.ui,
-          chatInputEnabled: false,
+          chatInputEnabled: true,
         },
       };
     }

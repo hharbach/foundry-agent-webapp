@@ -397,7 +397,7 @@ flowchart LR
 
     idle --> yes
     sending --> no
-    streaming --> no
+    streaming --> yes
     error --> maybe
 
     maybe --> yes
@@ -433,6 +433,8 @@ flowchart LR
 | `CHAT_ERROR` | any | error | Set error, conditional input |
 | `CHAT_CLEAR_ERROR` | error | idle | Clear error + recoveredInput, enable input |
 | `CHAT_CLEAR` | any | idle | Reset all chat state |
+| `CHAT_LOAD_CONVERSATION` | any | idle | Replace messages, set conversationId, clear pendingMessages |
+| `CHAT_LOAD_MESSAGES` | any | (unchanged) | Append historical messages without changing status |
 | `CONVERSATIONS_LOADING` | any | (loading) | Set conversations loading state |
 | `CONVERSATIONS_SET_LIST` | any | (list updated) | Populate conversation list |
 | `CONVERSATIONS_TOGGLE_SIDEBAR` | any | (sidebar toggled) | Open/close conversation sidebar |

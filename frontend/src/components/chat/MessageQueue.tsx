@@ -1,4 +1,5 @@
-import { Tag } from '@fluentui/react-components';
+import { Button, Text } from '@fluentui/react-components';
+import { DismissRegular } from '@fluentui/react-icons';
 import styles from './MessageQueue.module.css';
 
 interface MessageQueueProps {
@@ -13,17 +14,17 @@ export const MessageQueue: React.FC<MessageQueueProps> = ({ messages, onRemove }
     <div className={styles.queue} role="list" aria-label="Queued messages">
       <span className={styles.label}>Queued:</span>
       {messages.map((text, i) => (
-        <Tag
-          key={i}
-          role="listitem"
-          dismissible
-          dismissIcon={{ 'aria-label': 'Remove queued message' }}
-          onDismiss={() => onRemove(i)}
-          size="small"
-          shape="circular"
-        >
-          {text.length > 60 ? text.slice(0, 60) + '…' : text}
-        </Tag>
+        <span key={i} role="listitem" className={styles.chip}>
+          <Text size={200}>{text.length > 60 ? text.slice(0, 60) + '…' : text}</Text>
+          <Button
+            appearance="transparent"
+            icon={<DismissRegular />}
+            size="small"
+            onClick={() => onRemove(i)}
+            aria-label="Remove queued message"
+            className={styles.dismissButton}
+          />
+        </span>
       ))}
     </div>
   );

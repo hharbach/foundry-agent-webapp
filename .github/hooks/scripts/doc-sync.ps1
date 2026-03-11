@@ -44,7 +44,7 @@ try {
         'appReducer.ts',
         'chatService.ts',
         'ChatInterface.tsx',
-        'AgentPreview.tsx'
+        'AgentChat.tsx'
     )
 
     # Check if the edited file matches any sensitive file

@@ -27,7 +27,7 @@ frontend/src/
 ├── App.tsx                      # Root with MsalProvider
 ├── main.tsx                     # Entry point
 ├── components/
-│   ├── AgentPreview.tsx         # Container (state → ChatInterface)
+│   ├── AgentChat.tsx         # Container (state → ChatInterface)
 │   ├── ChatInterface.tsx        # Controlled chat UI
 │   └── chat/                    # Chat subcomponents
 │       ├── AssistantMessage.tsx # Streaming message + citations
@@ -120,7 +120,7 @@ See `package.json` for current versions.
 
 | Component | Role | Pattern |
 |-----------|------|---------|
-| `AgentPreview` | Container | Wires state to controlled component |
+| `AgentChat` | Container | Wires state to controlled component |
 | `ChatInterface` | Presentation | Stateless, receives props + callbacks |
 | `ChatInput` | Controlled input | Manages local input state, calls parent handlers |
 | `AssistantMessage` | Memoized | Renders streaming text + citations |
