@@ -18,10 +18,12 @@ interface ChatInterfaceProps {
   error: AppError | null;
   streamingMessageId?: string;
   recoveredInput?: string;
+  pendingMessages?: string[];
   onSendMessage: (text: string, files?: File[]) => void;
   onMcpApproval?: (approvalRequestId: string, approved: boolean, previousResponseId: string, conversationId: string) => void;
   onClearError?: () => void;
   onRecoveredInputConsumed?: () => void;
+  onDequeueMessage?: (index: number) => void;
   onOpenSettings?: () => void;
   onNewChat?: () => void;
   onCancelStream?: () => void;
@@ -36,12 +38,12 @@ interface ChatInterfaceProps {
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = (props) => {
-  const { messages, status, error, streamingMessageId, recoveredInput, onSendMessage, onMcpApproval, onClearError, onRecoveredInputConsumed, onOpenSettings, onNewChat, onCancelStream, onToggleSidebar, hasMessages, disabled, agentName, agentDescription, agentLogo, starterPrompts, conversationId } = props;
+  const { messages, status, error, streamingMessageId, recoveredInput, pendingMessages, onSendMessage, onMcpApproval, onClearError, onRecoveredInputConsumed, onDequeueMessage, onOpenSettings, onNewChat, onCancelStream, onToggleSidebar, hasMessages, disabled, agentName, agentDescription, agentLogo, starterPrompts, conversationId } = props;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [liveRegionMessage, setLiveRegionMessage] = useState<string>('');
   
   const isStreaming = status === 'streaming';
-  const isBusy = disabled || ['sending', 'streaming'].includes(status);
+  const isBusy = disabled || status === 'sending';
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -185,6 +187,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = (props) => {
           onCancelStream={isStreaming && onCancelStream ? onCancelStream : undefined}
           recoveredInput={recoveredInput}
           onRecoveredInputConsumed={onRecoveredInputConsumed}
+          pendingMessages={pendingMessages}
+          onDequeueMessage={onDequeueMessage}
         />
         <BuiltWithBadge className={styles.builtWithBadge} />
       </div>

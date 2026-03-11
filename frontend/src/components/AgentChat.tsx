@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { ChatInterface } from './ChatInterface';
 import { ConversationSidebar } from './ConversationSidebar';
 import { SettingsPanel } from './core/SettingsPanel';
@@ -31,7 +31,27 @@ export const AgentChat: React.FC<AgentChatProps> = ({ agentName, agentDescriptio
   }, [apiUrl, getAccessToken, dispatch]);
 
   const handleSendMessage = async (text: string, files?: File[]) => {
+    if (chat.status === 'streaming' || chat.status === 'sending') {
+      dispatch({ type: 'CHAT_QUEUE_MESSAGE', text });
+      return;
+    }
     await chatService.sendMessage(text, chat.currentConversationId, files);
+  };
+
+  // Drain the queue when the stream completes
+  const pendingRef = useRef(chat.pendingMessages);
+  pendingRef.current = chat.pendingMessages;
+
+  useEffect(() => {
+    if (chat.status === 'idle' && pendingRef.current.length > 0) {
+      const combined = pendingRef.current.join('\n\n');
+      dispatch({ type: 'CHAT_CLEAR_QUEUE' });
+      chatService.sendMessage(combined, chat.currentConversationId);
+    }
+  }, [chat.status, chat.currentConversationId, chatService, dispatch]);
+
+  const handleDequeueMessage = (index: number) => {
+    dispatch({ type: 'CHAT_DEQUEUE_MESSAGE', index });
   };
 
   const handleClearError = () => {
@@ -155,6 +175,8 @@ export const AgentChat: React.FC<AgentChatProps> = ({ agentName, agentDescriptio
           onMcpApproval={handleMcpApproval}
           onToggleSidebar={handleToggleSidebar}
           conversationId={chat.currentConversationId}
+          pendingMessages={chat.pendingMessages}
+          onDequeueMessage={handleDequeueMessage}
           hasMessages={chat.messages.length > 0}
           disabled={false}
           agentName={agentName}

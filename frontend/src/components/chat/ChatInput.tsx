@@ -7,6 +7,7 @@ import {
 import { Button, Toast, ToastTitle, Toaster, useId, useToastController, Text, makeStyles, tokens } from '@fluentui/react-components';
 import { Attach24Regular, Settings24Regular, ChatAdd24Regular, Stop24Regular, History24Regular } from '@fluentui/react-icons';
 import { FilePreview } from './FilePreview';
+import { MessageQueue } from './MessageQueue';
 import { validateFile, validateFileCount } from '../../utils/fileAttachments';
 import styles from './ChatInput.module.css';
 
@@ -47,6 +48,8 @@ interface ChatInputProps {
   onCancelStream?: () => void;
   recoveredInput?: string;
   onRecoveredInputConsumed?: () => void;
+  pendingMessages?: string[];
+  onDequeueMessage?: (index: number) => void;
 }
 
 const focusInput = (containerRef: React.RefObject<HTMLDivElement | null>) => {
@@ -68,6 +71,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onCancelStream,
   recoveredInput,
   onRecoveredInputConsumed,
+  pendingMessages = [],
+  onDequeueMessage,
 }) => {
   const [inputText, setInputText] = useState<string>("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -266,7 +271,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           aria-label="Chat Input"
           aria-describedby={showCounter ? charCounterId : undefined}
           charactersRemainingMessage={() => ``}
-          disabled={disabled || isStreaming}
+          disabled={disabled}
           history={true}
           onChange={(_, data) => setInputText(data.value)}
           onSubmit={handleSubmit}
@@ -280,6 +285,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               {charCount} / {CHAR_MAX_RECOMMENDED} characters (recommended limit)
             </Text>
           </div>
+        )}
+        {pendingMessages.length > 0 && onDequeueMessage && (
+          <MessageQueue messages={pendingMessages} onRemove={onDequeueMessage} />
         )}
         <div className={styles.buttonRow}>
           <div className={styles.actionButtons}>

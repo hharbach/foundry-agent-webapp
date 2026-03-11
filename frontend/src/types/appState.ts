@@ -33,9 +33,10 @@ export interface AppState {
     status: 'idle' | 'sending' | 'streaming' | 'error';
     messages: IChatItem[];
     currentConversationId: string | null;
-    error: AppError | null; // Enhanced error object
-    streamingMessageId?: string; // Which message is actively streaming
-    recoveredInput?: string; // Message text restored to input after failed retries
+    error: AppError | null;
+    streamingMessageId?: string;
+    recoveredInput?: string;
+    pendingMessages: string[]; // queued messages waiting to send after current stream completes
   };
 
   // Conversation history state
@@ -79,6 +80,9 @@ export type AppAction =
   | { type: 'CHAT_STREAM_RETRY'; messageId: string; attempt: number; maxRetries: number }
   | { type: 'CHAT_RECOVER_MESSAGE'; messageText: string; error: AppError; retryCount: number }
   | { type: 'CHAT_CONSUMED_RECOVERED_INPUT' }
+  | { type: 'CHAT_QUEUE_MESSAGE'; text: string }
+  | { type: 'CHAT_DEQUEUE_MESSAGE'; index: number }
+  | { type: 'CHAT_CLEAR_QUEUE' }
 
   // Conversation history actions
   | { type: 'CONVERSATIONS_SET_LIST'; conversations: ConversationSummary[]; hasMore: boolean; append?: boolean }
@@ -103,6 +107,7 @@ export const initialAppState: AppState = {
     error: null,
     streamingMessageId: undefined,
     recoveredInput: undefined,
+    pendingMessages: [],
   },
   conversations: {
     list: [],

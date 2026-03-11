@@ -1,0 +1,13 @@
+.queue {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 12px 8px;
+}
+
+.label {
+  font-size: 11px;
+  color: var(--colorNeutralForeground3);
+  margin-right: 4px;
+  align-self: center;
+}

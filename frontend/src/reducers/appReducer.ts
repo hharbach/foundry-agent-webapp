@@ -66,6 +66,7 @@ export const appReducer = (state: AppState, action: AppAction): AppState => {
           currentConversationId: action.conversationId,
           streamingMessageId: undefined,
           error: null,
+          pendingMessages: [],
         },
         ui: {
           ...state.ui,
@@ -105,7 +106,7 @@ export const appReducer = (state: AppState, action: AppAction): AppState => {
         },
         ui: {
           ...state.ui,
-          chatInputEnabled: false,
+          chatInputEnabled: true,
         },
       };
 
@@ -289,6 +290,7 @@ export const appReducer = (state: AppState, action: AppAction): AppState => {
           error: null,
           streamingMessageId: undefined,
           recoveredInput: undefined,
+          pendingMessages: [],
         },
         ui: {
           ...state.ui,
@@ -356,6 +358,34 @@ export const appReducer = (state: AppState, action: AppAction): AppState => {
         chat: {
           ...state.chat,
           recoveredInput: undefined,
+        },
+      };
+
+    // === Message Queue ===
+    case 'CHAT_QUEUE_MESSAGE':
+      return {
+        ...state,
+        chat: {
+          ...state.chat,
+          pendingMessages: [...state.chat.pendingMessages, action.text],
+        },
+      };
+
+    case 'CHAT_DEQUEUE_MESSAGE':
+      return {
+        ...state,
+        chat: {
+          ...state.chat,
+          pendingMessages: state.chat.pendingMessages.filter((_, i) => i !== action.index),
+        },
+      };
+
+    case 'CHAT_CLEAR_QUEUE':
+      return {
+        ...state,
+        chat: {
+          ...state.chat,
+          pendingMessages: [],
         },
       };
 

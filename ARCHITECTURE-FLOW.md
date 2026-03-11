@@ -241,8 +241,12 @@ stateDiagram-v2
 |-------|-------------|---------------|-------------------|
 | `idle` | Ready for input | ✅ Yes (except during MCP approval) | `undefined` |
 | `sending` | Request in flight | ❌ No | `undefined` |
-| `streaming` | Receiving chunks (or retrying) | ❌ No | Message ID |
+| `streaming` | Receiving chunks (or retrying) | ✅ Yes (messages queue) | Message ID |
 | `error` | Failure occurred | If recoverable | `undefined` |
+
+### Message Queue
+
+When the AI is streaming, the input stays enabled. Messages sent during streaming are queued in `pendingMessages[]` and shown as dismissible chips below the input. When the stream completes and status returns to `idle`, queued messages are combined (newline-separated) into a single message and auto-sent.
 
 ### Stream Retry & Message Recovery
 
@@ -423,6 +427,9 @@ flowchart LR
 | `CHAT_STREAM_RETRY` | streaming | streaming | Reset assistant msg content, show retry indicator |
 | `CHAT_RECOVER_MESSAGE` | streaming | error | Remove failed msgs, restore input text, show error |
 | `CHAT_CONSUMED_RECOVERED_INPUT` | any | (unchanged) | Clear recoveredInput after input pre-fill |
+| `CHAT_QUEUE_MESSAGE` | any | (unchanged) | Append text to pendingMessages |
+| `CHAT_DEQUEUE_MESSAGE` | any | (unchanged) | Remove message at index from pendingMessages |
+| `CHAT_CLEAR_QUEUE` | any | (unchanged) | Clear pendingMessages array |
 | `CHAT_ERROR` | any | error | Set error, conditional input |
 | `CHAT_CLEAR_ERROR` | error | idle | Clear error + recoveredInput, enable input |
 | `CHAT_CLEAR` | any | idle | Reset all chat state |

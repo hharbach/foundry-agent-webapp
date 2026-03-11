@@ -19,6 +19,7 @@ function createInitialState(): AppState {
       error: null,
       streamingMessageId: undefined,
       recoveredInput: undefined,
+      pendingMessages: [],
     },
     ui: {
       chatInputEnabled: true,
@@ -210,7 +211,7 @@ describe('appReducer', () => {
       expect(result.chat.streamingMessageId).toBe('msg-456');
     });
 
-    it('disables chat input', () => {
+    it('keeps chat input enabled for message queueing', () => {
       const state = createInitialState();
       const action: AppAction = {
         type: 'CHAT_START_STREAM',
@@ -220,7 +221,7 @@ describe('appReducer', () => {
 
       const result = appReducer(state, action);
 
-      expect(result.ui.chatInputEnabled).toBe(false);
+      expect(result.ui.chatInputEnabled).toBe(true);
     });
 
     it('clears any existing error', () => {
@@ -915,6 +916,96 @@ describe('appReducer', () => {
     });
   });
 
+  describe('CHAT_QUEUE_MESSAGE', () => {
+    it('appends text to pendingMessages', () => {
+      const state = createInitialState();
+
+      const result = appReducer(state, { type: 'CHAT_QUEUE_MESSAGE', text: 'first' });
+
+      expect(result.chat.pendingMessages).toEqual(['first']);
+    });
+
+    it('appends multiple messages in order', () => {
+      const state = createInitialState();
+      state.chat.pendingMessages = ['first'];
+
+      const result = appReducer(state, { type: 'CHAT_QUEUE_MESSAGE', text: 'second' });
+
+      expect(result.chat.pendingMessages).toEqual(['first', 'second']);
+    });
+  });
+
+  describe('CHAT_DEQUEUE_MESSAGE', () => {
+    it('removes message at given index', () => {
+      const state = createInitialState();
+      state.chat.pendingMessages = ['a', 'b', 'c'];
+
+      const result = appReducer(state, { type: 'CHAT_DEQUEUE_MESSAGE', index: 1 });
+
+      expect(result.chat.pendingMessages).toEqual(['a', 'c']);
+    });
+
+    it('handles removing last item', () => {
+      const state = createInitialState();
+      state.chat.pendingMessages = ['only'];
+
+      const result = appReducer(state, { type: 'CHAT_DEQUEUE_MESSAGE', index: 0 });
+
+      expect(result.chat.pendingMessages).toEqual([]);
+    });
+  });
+
+  describe('CHAT_CLEAR_QUEUE', () => {
+    it('empties pendingMessages', () => {
+      const state = createInitialState();
+      state.chat.pendingMessages = ['a', 'b', 'c'];
+
+      const result = appReducer(state, { type: 'CHAT_CLEAR_QUEUE' });
+
+      expect(result.chat.pendingMessages).toEqual([]);
+    });
+  });
+
+  describe('CHAT_CLEAR', () => {
+    it('clears pendingMessages', () => {
+      const state = createInitialState();
+      state.chat.pendingMessages = ['queued'];
+
+      const result = appReducer(state, { type: 'CHAT_CLEAR' });
+
+      expect(result.chat.pendingMessages).toEqual([]);
+    });
+  });
+
+  describe('CHAT_LOAD_CONVERSATION', () => {
+    it('clears pendingMessages when switching conversations', () => {
+      const state = createInitialState();
+      state.chat.pendingMessages = ['queued'];
+
+      const result = appReducer(state, {
+        type: 'CHAT_LOAD_CONVERSATION',
+        conversationId: 'new-conv',
+        messages: [],
+      });
+
+      expect(result.chat.pendingMessages).toEqual([]);
+    });
+  });
+
+  describe('CHAT_START_STREAM', () => {
+    it('keeps input enabled during streaming', () => {
+      const state = createInitialState();
+
+      const result = appReducer(state, {
+        type: 'CHAT_START_STREAM',
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
+      });
+
+      expect(result.ui.chatInputEnabled).toBe(true);
+    });
+  });
+
   describe('CHAT_CLEAR_ERROR', () => {
     it('clears recoveredInput along with error', () => {
       const state = createInitialState();
@@ -1123,6 +1214,7 @@ describe('appReducer', () => {
           "chat.currentConversationId",
           "chat.error",
           "chat.messages",
+          "chat.pendingMessages",
           "chat.recoveredInput",
           "chat.status",
           "chat.streamingMessageId",
