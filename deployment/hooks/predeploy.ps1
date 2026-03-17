@@ -7,16 +7,23 @@ Start-HookLog -HookName "predeploy" -EnvironmentName $env:AZURE_ENV_NAME
 
 Write-Host "Pre-Deploy: Building Container Image" -ForegroundColor Cyan
 
-# Get required values
-$clientId = azd env get-value ENTRA_SPA_CLIENT_ID 2>$null
-$tenantId = azd env get-value ENTRA_TENANT_ID 2>$null
-$backendClientId = azd env get-value ENTRA_BACKEND_CLIENT_ID 2>$null
-$appInsightsConnStr = (azd env get-value APPLICATIONINSIGHTS_FRONTEND_CONNECTION_STRING 2>&1) | Where-Object { $_ -notmatch 'ERROR' } | Select-Object -First 1
+# Get required values — azd injects env vars into hooks, but `azd env get-value` may fail
+# if the subprocess can't locate azure.yaml. Fall back to $env: vars.
+function Get-AzdValue($name) {
+    $val = (azd env get-value $name 2>&1) | Where-Object { $_ -notmatch 'ERROR|WARNING' } | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($val)) { $val = [Environment]::GetEnvironmentVariable($name) }
+    return $val
+}
+
+$clientId = Get-AzdValue 'ENTRA_SPA_CLIENT_ID'
+$tenantId = Get-AzdValue 'ENTRA_TENANT_ID'
+$backendClientId = Get-AzdValue 'ENTRA_BACKEND_CLIENT_ID'
+$appInsightsConnStr = Get-AzdValue 'APPLICATIONINSIGHTS_FRONTEND_CONNECTION_STRING'
 # Escape semicolons for ACR cloud builds — unescaped semicolons are interpreted as shell command separators
 if ($appInsightsConnStr) { $appInsightsConnStrEscaped = $appInsightsConnStr -replace ';', '\;' } else { $appInsightsConnStrEscaped = '' }
-$acrName = azd env get-value AZURE_CONTAINER_REGISTRY_NAME 2>$null
-$resourceGroup = azd env get-value AZURE_RESOURCE_GROUP_NAME 2>$null
-$containerApp = azd env get-value AZURE_CONTAINER_APP_NAME 2>$null
+$acrName = Get-AzdValue 'AZURE_CONTAINER_REGISTRY_NAME'
+$resourceGroup = Get-AzdValue 'AZURE_RESOURCE_GROUP_NAME'
+$containerApp = Get-AzdValue 'AZURE_CONTAINER_APP_NAME'
 
 if (-not $clientId -or -not $tenantId) {
     Write-Host "[ERROR] ENTRA_SPA_CLIENT_ID or ENTRA_TENANT_ID not set" -ForegroundColor Red

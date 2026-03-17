@@ -10,6 +10,12 @@
       },
       {
         "type": "command",
+        "powershell": "./scripts/setup-check.ps1",
+        "cwd": ".github/hooks",
+        "timeoutSec": 10
+      },
+      {
+        "type": "command",
         "powershell": "./scripts/test-reminder.ps1",
         "cwd": ".github/hooks",
         "timeoutSec": 10

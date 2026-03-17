@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { resolve, dirname } from "path";
 import { existsSync } from "fs";
 import { fileURLToPath } from "url";
+import { envCheckPlugin } from "./plugins/envcheck";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -21,7 +22,7 @@ export default defineConfig(({ mode }) => {
   process.env.VITE_ENTRA_TENANT_ID = env.ENTRA_TENANT_ID || env.VITE_ENTRA_TENANT_ID;
 
   return {
-    plugins: [react()],
+    plugins: [react(), envCheckPlugin()],
     resolve: {
       alias: {
         "~": resolve(__dirname, "./src"),

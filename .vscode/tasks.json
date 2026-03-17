@@ -75,6 +75,18 @@
       }
     },
     {
+      "label": "Validate Configuration",
+      "type": "shell",
+      "command": "pwsh",
+      "args": ["-File", "${workspaceFolder}/deployment/scripts/validate-config.ps1"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "showReuseMessage": false
+      }
+    },
+    {
       "label": "Start Dev (VS Code Terminals)",
       "dependsOn": ["Backend: ASP.NET Core API", "Frontend: React Vite"],
       "dependsOrder": "parallel",
