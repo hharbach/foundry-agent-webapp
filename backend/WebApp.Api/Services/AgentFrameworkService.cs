@@ -4,13 +4,12 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI.Files;
 using OpenAI.Responses;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Web;
-using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Xml.Linq;
 using WebApp.Api.Models;
 
 namespace WebApp.Api.Services;
@@ -315,7 +314,29 @@ public class AgentFrameworkService : IDisposable
             }
 
             // Build user message with optional images and files
-            ResponseItem userMessage = BuildUserMessage(message, imageDataUris, fileDataUris);
+            ResponseItem userMessage;
+            try
+            {
+                userMessage = await BuildUserMessageAsync(
+                    message,
+                    imageDataUris,
+                    fileDataUris,
+                    cancellationToken);
+            }
+            catch (ArgumentException ex)
+            {
+                var fileSummary = fileDataUris == null
+                    ? "none"
+                    : string.Join(", ", fileDataUris.Select(f => $"{f.FileName}:{f.MimeType}:{f.DataUri.Length}"));
+
+                _logger.LogError(
+                    ex,
+                    "Attachment validation failed for conversation {ConversationId}. FileSummary={FileSummary}",
+                    conversationId,
+                    fileSummary);
+                throw;
+            }
+
             options.InputItems.Add(userMessage);
         }
 
@@ -324,106 +345,112 @@ public class AgentFrameworkService : IDisposable
         // Track the current response ID for MCP approval resume flow
         string? currentResponseId = null;
 
+        var updateCount = 0;
+
         await foreach (StreamingResponseUpdate update
             in responsesClient.CreateResponseStreamingAsync(
                 options: options,
                 cancellationToken: cancellationToken))
         {
-            // Capture response ID from created event (needed for MCP approval resume)
-            if (update is StreamingResponseCreatedUpdate createdUpdate)
-            {
-                currentResponseId = createdUpdate.Response.Id;
-                _logger.LogDebug("Response created: {ResponseId}", currentResponseId);
-                continue;
-            }
+            updateCount++;
 
-            if (update is StreamingResponseOutputTextDeltaUpdate deltaUpdate)
-            {
-                yield return StreamChunk.Text(deltaUpdate.Delta);
-            }
-            else if (update is StreamingResponseOutputItemDoneUpdate itemDoneUpdate)
-            {
-                // Check for MCP tool approval request
-                if (itemDoneUpdate.Item is McpToolCallApprovalRequestItem mcpApprovalItem)
+                // Capture response ID from created event (needed for MCP approval resume)
+                if (update is StreamingResponseCreatedUpdate createdUpdate)
                 {
-                    _logger.LogInformation(
-                        "MCP tool approval requested: Id={Id}, Tool={Tool}, Server={Server}",
-                        mcpApprovalItem.Id,
-                        mcpApprovalItem.ToolName,
-                        mcpApprovalItem.ServerLabel);
-                    
-                    // Parse tool arguments from BinaryData to string (JSON)
-                    string? argumentsJson = mcpApprovalItem.ToolArguments?.ToString();
-                    
-                    yield return StreamChunk.McpApproval(new McpApprovalRequest
-                    {
-                        Id = mcpApprovalItem.Id,
-                        ToolName = mcpApprovalItem.ToolName ?? "Unknown tool",
-                        ServerLabel = mcpApprovalItem.ServerLabel ?? "MCP Server",
-                        Arguments = argumentsJson,
-                        PreviousResponseId = currentResponseId
-                    });
+                    currentResponseId = createdUpdate.Response.Id;
+                    _logger.LogDebug("Response created: {ResponseId}", currentResponseId);
                     continue;
                 }
-                
-                // Capture file search results for quote extraction
-                if (itemDoneUpdate.Item is FileSearchCallResponseItem fileSearchItem)
+
+                if (update is StreamingResponseOutputTextDeltaUpdate deltaUpdate)
                 {
-                    foreach (var result in fileSearchItem.Results)
+                    yield return StreamChunk.Text(deltaUpdate.Delta);
+                }
+                else if (update is StreamingResponseOutputItemDoneUpdate itemDoneUpdate)
+                {
+                    // Check for MCP tool approval request
+                    if (itemDoneUpdate.Item is McpToolCallApprovalRequestItem mcpApprovalItem)
                     {
-                        if (!string.IsNullOrEmpty(result.FileId) && !string.IsNullOrEmpty(result.Text))
+                        _logger.LogInformation(
+                            "MCP tool approval requested: Id={Id}, Tool={Tool}, Server={Server}",
+                            mcpApprovalItem.Id,
+                            mcpApprovalItem.ToolName,
+                            mcpApprovalItem.ServerLabel);
+
+                        string? argumentsJson = mcpApprovalItem.ToolArguments?.ToString();
+
+                        yield return StreamChunk.McpApproval(new McpApprovalRequest
                         {
-                            fileSearchQuotes[result.FileId] = result.Text;
-                            _logger.LogDebug(
-                                "Captured file search quote for FileId={FileId}, QuoteLength={Length}", 
-                                result.FileId, 
-                                result.Text.Length);
-                        }
+                            Id = mcpApprovalItem.Id,
+                            ToolName = mcpApprovalItem.ToolName ?? "Unknown tool",
+                            ServerLabel = mcpApprovalItem.ServerLabel ?? "MCP Server",
+                            Arguments = argumentsJson,
+                            PreviousResponseId = currentResponseId
+                        });
+                        continue;
                     }
-                    continue;
-                }
-                
-                // Extract annotations/citations from completed output items
-                var annotations = ExtractAnnotations(itemDoneUpdate.Item, fileSearchQuotes);
-                if (annotations.Count > 0)
-                {
-                    _logger.LogInformation("Extracted {Count} annotations from response", annotations.Count);
-                    yield return StreamChunk.WithAnnotations(annotations);
-                }
-            }
-            else if (update is StreamingResponseOutputItemAddedUpdate itemAddedUpdate)
-            {
-                // Detect tool-use steps and signal the frontend for progress indicators
-                string? toolName = itemAddedUpdate.Item switch
-                {
-                    FileSearchCallResponseItem => "file_search",
-                    CodeInterpreterCallResponseItem => "code_interpreter",
-                    _ when itemAddedUpdate.Item?.GetType().Name.Contains("ToolCall") == true => "function_call",
-                    _ => null
-                };
 
-                if (toolName != null)
-                {
-                    _logger.LogDebug("Tool use detected: {ToolName}", toolName);
-                    yield return StreamChunk.ToolUse(toolName);
+                    // Capture file search results for quote extraction
+                    if (itemDoneUpdate.Item is FileSearchCallResponseItem fileSearchItem)
+                    {
+                        foreach (var result in fileSearchItem.Results)
+                        {
+                            if (!string.IsNullOrEmpty(result.FileId) && !string.IsNullOrEmpty(result.Text))
+                            {
+                                fileSearchQuotes[result.FileId] = result.Text;
+                                _logger.LogDebug(
+                                    "Captured file search quote for FileId={FileId}, QuoteLength={Length}",
+                                    result.FileId,
+                                    result.Text.Length);
+                            }
+                        }
+                        continue;
                 }
-            }
-            else if (update is StreamingResponseCompletedUpdate completedUpdate)
-            {
-                _lastUsage = completedUpdate.Response.Usage;
-            }
-            else if (update is StreamingResponseErrorUpdate errorUpdate)
-            {
-                _logger.LogError("Stream error: {Error}", errorUpdate.Message);
-                throw new InvalidOperationException($"Stream error: {errorUpdate.Message}");
-            }
-            else
-            {
-                _logger.LogDebug("Unhandled stream update type: {Type}", update.GetType().Name);
-            }
+
+                    var annotations = ExtractAnnotations(itemDoneUpdate.Item, fileSearchQuotes);
+                    if (annotations.Count > 0)
+                    {
+                        _logger.LogInformation("Extracted {Count} annotations from response", annotations.Count);
+                        yield return StreamChunk.WithAnnotations(annotations);
+                    }
+                }
+                else if (update is StreamingResponseOutputItemAddedUpdate itemAddedUpdate)
+                {
+                    // Detect tool-use steps and signal the frontend for progress indicators
+                    string? toolName = itemAddedUpdate.Item switch
+                    {
+                        FileSearchCallResponseItem => "file_search",
+                        CodeInterpreterCallResponseItem => "code_interpreter",
+                        _ when itemAddedUpdate.Item?.GetType().Name.Contains("ToolCall") == true => "function_call",
+                        _ => null
+                    };
+
+                    if (toolName != null)
+                    {
+                        _logger.LogDebug("Tool use detected: {ToolName}", toolName);
+                        yield return StreamChunk.ToolUse(toolName);
+                    }
+                }
+                else if (update is StreamingResponseCompletedUpdate completedUpdate)
+                {
+                    _lastUsage = completedUpdate.Response.Usage;
+                }
+                else if (update is StreamingResponseErrorUpdate errorUpdate)
+                {
+                    _logger.LogError("Stream error: {Error}", errorUpdate.Message);
+                    throw new InvalidOperationException($"Stream error: {errorUpdate.Message}");
+                }
+                else
+                {
+                    _logger.LogDebug("Unhandled stream update type: {Type}", update.GetType().Name);
+                }
         }
 
-        _logger.LogInformation("Completed streaming for conversation: {ConversationId}", conversationId);
+        _logger.LogInformation(
+            "Completed streaming for conversation: {ConversationId}. UpdateCount={UpdateCount}, HasResponseId={HasResponseId}",
+            conversationId,
+            updateCount,
+            !string.IsNullOrEmpty(currentResponseId));
     }
 
     /// <summary>
@@ -434,7 +461,7 @@ public class AgentFrameworkService : IDisposable
 
     /// <summary>
     /// Supported document MIME types for file input.
-    /// Note: XLSX is parsed and inlined as text. Other Office formats are not supported.
+    /// Spreadsheets are uploaded as file artifacts for Code Interpreter.
     /// </summary>
     private static readonly HashSet<string> AllowedDocumentTypes = 
         [
@@ -451,6 +478,15 @@ public class AgentFrameworkService : IDisposable
         ];
 
     /// <summary>
+    /// Spreadsheet MIME types that should be sent as uploaded file artifacts.
+    /// </summary>
+    private static readonly HashSet<string> SpreadsheetDocumentTypes =
+        [
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel"
+        ];
+
+    /// <summary>
     /// Text-based document MIME types that should be inlined as text rather than sent as file input.
     /// The Responses API only supports PDF for CreateInputFilePart.
     /// </summary>
@@ -462,9 +498,7 @@ public class AgentFrameworkService : IDisposable
             "application/json",
             "text/html",
             "application/xml",
-            "text/xml",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.ms-excel"
+            "text/xml"
         ];
 
     /// <summary>
@@ -499,10 +533,11 @@ public class AgentFrameworkService : IDisposable
     /// Builds a ResponseItem for the user message with optional image and file attachments.
     /// Validates count, size, MIME type, and Base64 format for both images and documents.
     /// </summary>
-    private static ResponseItem BuildUserMessage(
+    private async Task<ResponseItem> BuildUserMessageAsync(
         string message, 
         List<string>? imageDataUris,
-        List<FileAttachment>? fileDataUris = null)
+        List<FileAttachment>? fileDataUris = null,
+        CancellationToken cancellationToken = default)
     {
         if ((imageDataUris == null || imageDataUris.Count == 0) && 
             (fileDataUris == null || fileDataUris.Count == 0))
@@ -597,25 +632,21 @@ public class AgentFrameworkService : IDisposable
                     continue;
                 }
 
-                // Handle text-based files by inlining their content
-                // The Responses API only supports PDF for CreateInputFilePart
-                if (TextBasedDocumentTypes.Contains(mediaType))
+                if (SpreadsheetDocumentTypes.Contains(mediaType))
                 {
-                    string textContent;
-                    if (string.Equals(mediaType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(mediaType, "application/vnd.ms-excel", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (!TryExtractTextFromXlsx(bytes, out textContent, out var spreadsheetError))
-                        {
-                            errors.Add($"{label}: {spreadsheetError}. If this is a legacy .xls file, save it as .xlsx and retry.");
-                            continue;
-                        }
-                    }
-                    else
-                    {
-                        textContent = Encoding.UTF8.GetString(bytes);
-                    }
+                    // True Code Interpreter flow: upload spreadsheet as an artifact and pass file reference.
+                    var uploadedFileId = await UploadSpreadsheetArtifactAsync(
+                        file.FileName,
+                        bytes,
+                        cancellationToken);
 
+                    contentParts.Add(ResponseContentPart.CreateInputTextPart(
+                        $"\n\nSpreadsheet attached as artifact '{file.FileName}' (file_id: {uploadedFileId}). Use code interpreter to analyze it.\n"));
+                    contentParts.Add(ResponseContentPart.CreateInputFilePart(uploadedFileId));
+                }
+                else if (TextBasedDocumentTypes.Contains(mediaType))
+                {
+                    var textContent = Encoding.UTF8.GetString(bytes);
                     var inlineText = $"\n\n--- Content of {file.FileName} ---\n{textContent}\n--- End of {file.FileName} ---\n";
                     contentParts.Add(ResponseContentPart.CreateInputTextPart(inlineText));
                 }
@@ -637,179 +668,26 @@ public class AgentFrameworkService : IDisposable
         return ResponseItem.CreateUserMessageItem(contentParts);
     }
 
-    /// <summary>
-    /// Extracts visible cell content from an .xlsx workbook as plain text.
-    /// </summary>
-    private static bool TryExtractTextFromXlsx(byte[] bytes, out string text, out string error)
+    private async Task<string> UploadSpreadsheetArtifactAsync(
+        string fileName,
+        byte[] bytes,
+        CancellationToken cancellationToken)
     {
-        text = string.Empty;
-        error = string.Empty;
+        var fileClient = GetProjectClient().OpenAI.GetOpenAIFileClient();
+        using var stream = new MemoryStream(bytes, writable: false);
+        var uploaded = await fileClient.UploadFileAsync(
+            stream,
+            fileName,
+            FileUploadPurpose.Assistants,
+            cancellationToken);
 
-        try
-        {
-            using var memoryStream = new MemoryStream(bytes, writable: false);
-            using var archive = new ZipArchive(memoryStream, ZipArchiveMode.Read, leaveOpen: false);
+        _logger.LogInformation(
+            "Uploaded spreadsheet artifact for code interpreter: {FileName}, FileId={FileId}, Size={SizeBytes}",
+            fileName,
+            uploaded.Value.Id,
+            bytes.Length);
 
-            var sharedStrings = ReadSharedStrings(archive);
-            var workbookEntry = archive.GetEntry("xl/workbook.xml");
-            if (workbookEntry == null)
-            {
-                error = "Invalid XLSX format (missing workbook.xml)";
-                return false;
-            }
-
-            var workbookDoc = XDocument.Load(workbookEntry.Open());
-            XNamespace nsMain = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-            XNamespace nsRel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-
-            var relationships = ReadWorkbookRelationships(archive);
-            var builder = new StringBuilder();
-            const int maxChars = 200_000;
-
-            foreach (var sheet in workbookDoc.Descendants(nsMain + "sheet"))
-            {
-                var sheetName = sheet.Attribute("name")?.Value ?? "Sheet";
-                var relId = sheet.Attribute(nsRel + "id")?.Value;
-                if (string.IsNullOrEmpty(relId) || !relationships.TryGetValue(relId, out var targetPath))
-                {
-                    continue;
-                }
-
-                var worksheetEntry = archive.GetEntry(targetPath);
-                if (worksheetEntry == null)
-                {
-                    continue;
-                }
-
-                builder.AppendLine($"[Sheet: {sheetName}]");
-
-                var worksheetDoc = XDocument.Load(worksheetEntry.Open());
-                foreach (var row in worksheetDoc.Descendants(nsMain + "row"))
-                {
-                    var rowValues = new List<string>();
-                    foreach (var cell in row.Elements(nsMain + "c"))
-                    {
-                        var value = ExtractCellValue(cell, nsMain, sharedStrings);
-                        if (!string.IsNullOrWhiteSpace(value))
-                        {
-                            rowValues.Add(value.Trim());
-                        }
-                    }
-
-                    if (rowValues.Count > 0)
-                    {
-                        builder.AppendLine(string.Join("\t", rowValues));
-                        if (builder.Length >= maxChars)
-                        {
-                            builder.AppendLine("[Truncated due to size]");
-                            text = builder.ToString();
-                            return true;
-                        }
-                    }
-                }
-
-                builder.AppendLine();
-            }
-
-            if (builder.Length == 0)
-            {
-                error = "The XLSX file appears to have no readable cell content";
-                return false;
-            }
-
-            text = builder.ToString();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            error = $"Could not parse XLSX content: {ex.Message}";
-            return false;
-        }
-    }
-
-    private static Dictionary<string, string> ReadWorkbookRelationships(ZipArchive archive)
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var relsEntry = archive.GetEntry("xl/_rels/workbook.xml.rels");
-        if (relsEntry == null)
-        {
-            return result;
-        }
-
-        var relsDoc = XDocument.Load(relsEntry.Open());
-        XNamespace nsRel = "http://schemas.openxmlformats.org/package/2006/relationships";
-
-        foreach (var relationship in relsDoc.Descendants(nsRel + "Relationship"))
-        {
-            var id = relationship.Attribute("Id")?.Value;
-            var target = relationship.Attribute("Target")?.Value;
-            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(target))
-            {
-                continue;
-            }
-
-            var normalized = target.Replace('\\', '/');
-            if (!normalized.StartsWith("xl/", StringComparison.OrdinalIgnoreCase))
-            {
-                normalized = $"xl/{normalized.TrimStart('/')}";
-            }
-
-            result[id] = normalized;
-        }
-
-        return result;
-    }
-
-    private static List<string> ReadSharedStrings(ZipArchive archive)
-    {
-        var sharedStrings = new List<string>();
-        var sharedStringsEntry = archive.GetEntry("xl/sharedStrings.xml");
-        if (sharedStringsEntry == null)
-        {
-            return sharedStrings;
-        }
-
-        var doc = XDocument.Load(sharedStringsEntry.Open());
-        XNamespace nsMain = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-
-        foreach (var si in doc.Descendants(nsMain + "si"))
-        {
-            var textParts = si.Descendants(nsMain + "t").Select(t => t.Value);
-            sharedStrings.Add(string.Concat(textParts));
-        }
-
-        return sharedStrings;
-    }
-
-    private static string ExtractCellValue(XElement cell, XNamespace nsMain, List<string> sharedStrings)
-    {
-        var cellType = cell.Attribute("t")?.Value;
-
-        if (string.Equals(cellType, "inlineStr", StringComparison.OrdinalIgnoreCase))
-        {
-            return string.Concat(cell.Descendants(nsMain + "t").Select(t => t.Value));
-        }
-
-        var rawValue = cell.Element(nsMain + "v")?.Value;
-        if (string.IsNullOrEmpty(rawValue))
-        {
-            return string.Empty;
-        }
-
-        if (string.Equals(cellType, "s", StringComparison.OrdinalIgnoreCase)
-            && int.TryParse(rawValue, out var sharedIndex)
-            && sharedIndex >= 0
-            && sharedIndex < sharedStrings.Count)
-        {
-            return sharedStrings[sharedIndex];
-        }
-
-        if (string.Equals(cellType, "b", StringComparison.OrdinalIgnoreCase))
-        {
-            return rawValue == "1" ? "TRUE" : "FALSE";
-        }
-
-        return rawValue;
+        return uploaded.Value.Id;
     }
 
     /// <summary>

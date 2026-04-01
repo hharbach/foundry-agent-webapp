@@ -1,6 +1,7 @@
 using Azure.AI.Projects;
 using Azure.Core;
 using Azure.Identity;
+using OpenAI.Files;
 using WebApp.Api.Models;
 
 namespace WebApp.Api.Services;
@@ -72,15 +73,16 @@ public class KnowledgeIndexService : IDisposable
             // Get or create project client
             var projectClient = GetProjectClient();
 
-            // Get the OpenAI client from the project which handles file uploads
-            var openaiClient = projectClient.GetOpenAIClient();
+            // Get the OpenAI file client from the project which handles file uploads
+            var fileClient = projectClient.OpenAI.GetOpenAIFileClient();
 
             // Upload file via OpenAI Files API
             // This automatically indexes the file for Knowledge Index retrieval
             using var fileStream = new MemoryStream(fileBytes);
-            var fileResponse = await openaiClient.Files.UploadAsync(fileStream, fileName, cancellationToken);
+            var fileResponse = await fileClient.UploadFileAsync(
+                fileStream, fileName, FileUploadPurpose.Assistants, cancellationToken);
             
-            var fileId = fileResponse.Id;
+            var fileId = fileResponse.Value.Id;
             
             _logger.LogInformation(
                 "File uploaded successfully: {FileId}, FileName: {FileName}",
@@ -115,15 +117,15 @@ public class KnowledgeIndexService : IDisposable
         try
         {
             var projectClient = GetProjectClient();
-            var openaiClient = projectClient.GetOpenAIClient();
+            var fileClient = projectClient.OpenAI.GetOpenAIFileClient();
 
-            var fileInfo = await openaiClient.Files.RetrieveAsync(fileId, cancellationToken);
+            var fileInfo = await fileClient.GetFileAsync(fileId, cancellationToken);
             
             return (
-                fileInfo.Id,
-                fileInfo.Filename,
-                fileInfo.Size,
-                fileInfo.CreatedAt
+                fileInfo.Value.Id,
+                fileInfo.Value.Filename,
+                fileInfo.Value.SizeInBytes ?? 0,
+                fileInfo.Value.CreatedAt.UtcDateTime
             );
         }
         catch (Exception ex)
@@ -153,12 +155,12 @@ public class KnowledgeIndexService : IDisposable
             _logger.LogInformation("Deleting file from Knowledge Index: {FileId}", fileId);
             
             var projectClient = GetProjectClient();
-            var openaiClient = projectClient.GetOpenAIClient();
+            var fileClient = projectClient.OpenAI.GetOpenAIFileClient();
 
-            var success = await openaiClient.Files.DeleteAsync(fileId, cancellationToken);
+            await fileClient.DeleteFileAsync(fileId, cancellationToken);
             
             _logger.LogInformation(
-                "File deletion {'completed':success?'completed':'attempted'}: {FileId}",
+                "File deletion completed: {FileId}",
                 fileId);
         }
         catch (Exception ex)
@@ -179,7 +181,7 @@ public class KnowledgeIndexService : IDisposable
         if (_projectClient != null)
             return _projectClient;
 
-        _projectClient = new AIProjectClient(endpoint: _agentEndpoint, credential: _credential);
+        _projectClient = new AIProjectClient(new Uri(_agentEndpoint), _credential);
         return _projectClient;
     }
 
@@ -188,8 +190,8 @@ public class KnowledgeIndexService : IDisposable
         if (_disposed)
             return;
 
-        _projectClient?.Dispose();
-        _credential?.Dispose();
+        // AIProjectClient and TokenCredential do not implement IDisposable
+        _projectClient = null;
         _disposed = true;
     }
 }
