@@ -440,17 +440,16 @@ app.MapPost("/api/knowledge-index/upload", async (
         }
 
         // Only allow certain file types
-            var allowedMimeTypes = new[]
-            {
-                "application/pdf",
-                "text/csv",
-                "text/plain",
-                "application/json",
-                "text/html",
-                "application/xml",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // XLSX
-                "application/vnd.ms-excel" // XLS (older Excel format)
-            };
+        var allowedMimeTypes = new[]
+        {
+            "application/pdf",
+            "text/csv",
+            "text/plain",
+            "application/json",
+            "text/html",
+            "application/xml",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" // XLSX
+        };
         var fileName = file.FileName ?? "document";
         var mimeType = file.ContentType ?? "application/octet-stream";
 
@@ -466,9 +465,8 @@ app.MapPost("/api/knowledge-index/upload", async (
                 { ".json", "application/json" },
                 { ".html", "text/html" },
                 { ".htm", "text/html" },
-                    { ".xml", "application/xml" },
-                    { ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-                    { ".xls", "application/vnd.ms-excel" }
+                { ".xml", "application/xml" },
+                { ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
             };
 
             if (mimeMap.TryGetValue(extension, out var detectedMime))
@@ -481,7 +479,7 @@ app.MapPost("/api/knowledge-index/upload", async (
         {
             return Results.BadRequest(new
             {
-                    error = $"File type not supported. Allowed: PDF, CSV, TXT, JSON, HTML, XML, XLSX, XLS (provided: {mimeType})"
+                error = $"File type not supported. Allowed: PDF, CSV, TXT, JSON, HTML, XML, XLSX (provided: {mimeType})"
             });
         }
 
@@ -503,7 +501,7 @@ app.MapPost("/api/knowledge-index/upload", async (
             fileId,
             fileBytes.Length);
 
-        return Results.Accepted(new
+        return Results.Accepted(value: new
         {
             fileId,
             fileName,

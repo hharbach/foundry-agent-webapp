@@ -7,7 +7,10 @@ using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Web;
+using System.IO.Compression;
 using System.Runtime.CompilerServices;
+using System.Text;
+using System.Xml.Linq;
 using WebApp.Api.Models;
 
 namespace WebApp.Api.Services;
@@ -431,7 +434,7 @@ public class AgentFrameworkService : IDisposable
 
     /// <summary>
     /// Supported document MIME types for file input.
-    /// Note: Office documents (docx, pptx, xlsx) are NOT supported - they cannot be parsed.
+    /// Note: XLSX is parsed and inlined as text. Other Office formats are not supported.
     /// </summary>
     private static readonly HashSet<string> AllowedDocumentTypes = 
         [
@@ -442,7 +445,8 @@ public class AgentFrameworkService : IDisposable
             "application/json",
             "text/html",
             "application/xml",
-            "text/xml"
+            "text/xml",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ];
 
     /// <summary>
@@ -457,7 +461,8 @@ public class AgentFrameworkService : IDisposable
             "application/json",
             "text/html",
             "application/xml",
-            "text/xml"
+            "text/xml",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ];
 
     /// <summary>
@@ -594,7 +599,20 @@ public class AgentFrameworkService : IDisposable
                 // The Responses API only supports PDF for CreateInputFilePart
                 if (TextBasedDocumentTypes.Contains(mediaType))
                 {
-                    var textContent = System.Text.Encoding.UTF8.GetString(bytes);
+                    string textContent;
+                    if (string.Equals(mediaType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!TryExtractTextFromXlsx(bytes, out textContent, out var spreadsheetError))
+                        {
+                            errors.Add($"{label}: {spreadsheetError}");
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        textContent = Encoding.UTF8.GetString(bytes);
+                    }
+
                     var inlineText = $"\n\n--- Content of {file.FileName} ---\n{textContent}\n--- End of {file.FileName} ---\n";
                     contentParts.Add(ResponseContentPart.CreateInputTextPart(inlineText));
                 }
@@ -614,6 +632,181 @@ public class AgentFrameworkService : IDisposable
         }
 
         return ResponseItem.CreateUserMessageItem(contentParts);
+    }
+
+    /// <summary>
+    /// Extracts visible cell content from an .xlsx workbook as plain text.
+    /// </summary>
+    private static bool TryExtractTextFromXlsx(byte[] bytes, out string text, out string error)
+    {
+        text = string.Empty;
+        error = string.Empty;
+
+        try
+        {
+            using var memoryStream = new MemoryStream(bytes, writable: false);
+            using var archive = new ZipArchive(memoryStream, ZipArchiveMode.Read, leaveOpen: false);
+
+            var sharedStrings = ReadSharedStrings(archive);
+            var workbookEntry = archive.GetEntry("xl/workbook.xml");
+            if (workbookEntry == null)
+            {
+                error = "Invalid XLSX format (missing workbook.xml)";
+                return false;
+            }
+
+            var workbookDoc = XDocument.Load(workbookEntry.Open());
+            XNamespace nsMain = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            XNamespace nsRel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+            var relationships = ReadWorkbookRelationships(archive);
+            var builder = new StringBuilder();
+            const int maxChars = 200_000;
+
+            foreach (var sheet in workbookDoc.Descendants(nsMain + "sheet"))
+            {
+                var sheetName = sheet.Attribute("name")?.Value ?? "Sheet";
+                var relId = sheet.Attribute(nsRel + "id")?.Value;
+                if (string.IsNullOrEmpty(relId) || !relationships.TryGetValue(relId, out var targetPath))
+                {
+                    continue;
+                }
+
+                var worksheetEntry = archive.GetEntry(targetPath);
+                if (worksheetEntry == null)
+                {
+                    continue;
+                }
+
+                builder.AppendLine($"[Sheet: {sheetName}]");
+
+                var worksheetDoc = XDocument.Load(worksheetEntry.Open());
+                foreach (var row in worksheetDoc.Descendants(nsMain + "row"))
+                {
+                    var rowValues = new List<string>();
+                    foreach (var cell in row.Elements(nsMain + "c"))
+                    {
+                        var value = ExtractCellValue(cell, nsMain, sharedStrings);
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            rowValues.Add(value.Trim());
+                        }
+                    }
+
+                    if (rowValues.Count > 0)
+                    {
+                        builder.AppendLine(string.Join("\t", rowValues));
+                        if (builder.Length >= maxChars)
+                        {
+                            builder.AppendLine("[Truncated due to size]");
+                            text = builder.ToString();
+                            return true;
+                        }
+                    }
+                }
+
+                builder.AppendLine();
+            }
+
+            if (builder.Length == 0)
+            {
+                error = "The XLSX file appears to have no readable cell content";
+                return false;
+            }
+
+            text = builder.ToString();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"Could not parse XLSX content: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static Dictionary<string, string> ReadWorkbookRelationships(ZipArchive archive)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var relsEntry = archive.GetEntry("xl/_rels/workbook.xml.rels");
+        if (relsEntry == null)
+        {
+            return result;
+        }
+
+        var relsDoc = XDocument.Load(relsEntry.Open());
+        XNamespace nsRel = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+        foreach (var relationship in relsDoc.Descendants(nsRel + "Relationship"))
+        {
+            var id = relationship.Attribute("Id")?.Value;
+            var target = relationship.Attribute("Target")?.Value;
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(target))
+            {
+                continue;
+            }
+
+            var normalized = target.Replace('\\', '/');
+            if (!normalized.StartsWith("xl/", StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = $"xl/{normalized.TrimStart('/')}";
+            }
+
+            result[id] = normalized;
+        }
+
+        return result;
+    }
+
+    private static List<string> ReadSharedStrings(ZipArchive archive)
+    {
+        var sharedStrings = new List<string>();
+        var sharedStringsEntry = archive.GetEntry("xl/sharedStrings.xml");
+        if (sharedStringsEntry == null)
+        {
+            return sharedStrings;
+        }
+
+        var doc = XDocument.Load(sharedStringsEntry.Open());
+        XNamespace nsMain = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+        foreach (var si in doc.Descendants(nsMain + "si"))
+        {
+            var textParts = si.Descendants(nsMain + "t").Select(t => t.Value);
+            sharedStrings.Add(string.Concat(textParts));
+        }
+
+        return sharedStrings;
+    }
+
+    private static string ExtractCellValue(XElement cell, XNamespace nsMain, List<string> sharedStrings)
+    {
+        var cellType = cell.Attribute("t")?.Value;
+
+        if (string.Equals(cellType, "inlineStr", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Concat(cell.Descendants(nsMain + "t").Select(t => t.Value));
+        }
+
+        var rawValue = cell.Element(nsMain + "v")?.Value;
+        if (string.IsNullOrEmpty(rawValue))
+        {
+            return string.Empty;
+        }
+
+        if (string.Equals(cellType, "s", StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(rawValue, out var sharedIndex)
+            && sharedIndex >= 0
+            && sharedIndex < sharedStrings.Count)
+        {
+            return sharedStrings[sharedIndex];
+        }
+
+        if (string.Equals(cellType, "b", StringComparison.OrdinalIgnoreCase))
+        {
+            return rawValue == "1" ? "TRUE" : "FALSE";
+        }
+
+        return rawValue;
     }
 
     /// <summary>
