@@ -440,7 +440,17 @@ app.MapPost("/api/knowledge-index/upload", async (
         }
 
         // Only allow certain file types
-        var allowedMimeTypes = new[] { "application/pdf", "text/csv", "text/plain", "application/json", "text/html", "application/xml" };
+            var allowedMimeTypes = new[]
+            {
+                "application/pdf",
+                "text/csv",
+                "text/plain",
+                "application/json",
+                "text/html",
+                "application/xml",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // XLSX
+                "application/vnd.ms-excel" // XLS (older Excel format)
+            };
         var fileName = file.FileName ?? "document";
         var mimeType = file.ContentType ?? "application/octet-stream";
 
@@ -456,7 +466,9 @@ app.MapPost("/api/knowledge-index/upload", async (
                 { ".json", "application/json" },
                 { ".html", "text/html" },
                 { ".htm", "text/html" },
-                { ".xml", "application/xml" }
+                    { ".xml", "application/xml" },
+                    { ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+                    { ".xls", "application/vnd.ms-excel" }
             };
 
             if (mimeMap.TryGetValue(extension, out var detectedMime))
@@ -469,7 +481,7 @@ app.MapPost("/api/knowledge-index/upload", async (
         {
             return Results.BadRequest(new
             {
-                error = $"File type not supported. Allowed: PDF, CSV, TXT, JSON, HTML, XML (provided: {mimeType})"
+                    error = $"File type not supported. Allowed: PDF, CSV, TXT, JSON, HTML, XML, XLSX, XLS (provided: {mimeType})"
             });
         }
 
