@@ -133,6 +133,9 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<AgentFrameworkService>();
 
+// Register Knowledge Index Service for file uploads and RAG
+builder.Services.AddScoped<KnowledgeIndexService>();
+
 var app = builder.Build();
 
 // Add exception handling middleware for production
@@ -407,6 +410,190 @@ app.MapGet("/api/agent/info", async (
 })
 .RequireAuthorization(ScopePolicyName)
 .WithName("GetAgentInfo");
+
+// Upload file to Knowledge Index (for RAG retrieval in conversations)
+// This endpoint accepts a file and stores it in Foundry's Knowledge Index.
+// The file ID can then be referenced in subsequent chat messages for context.
+app.MapPost("/api/knowledge-index/upload", async (
+    IFormFile file,
+    KnowledgeIndexService knowledgeIndexService,
+    IHostEnvironment environment,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        // Validate file
+        if (file == null || file.Length == 0)
+        {
+            return Results.BadRequest(new { error = "No file provided" });
+        }
+
+        // Check file size (20MB limit for documents)
+        const long maxFileSize = 20 * 1024 * 1024;
+        if (file.Length > maxFileSize)
+        {
+            return Results.BadRequest(new
+            {
+                error = $"File exceeds maximum size of 20MB (current: {file.Length / (1024 * 1024)}MB)"
+            });
+        }
+
+        // Only allow certain file types
+        var allowedMimeTypes = new[] { "application/pdf", "text/csv", "text/plain", "application/json", "text/html", "application/xml" };
+        var fileName = file.FileName ?? "document";
+        var mimeType = file.ContentType ?? "application/octet-stream";
+
+        // Try to detect MIME type from file extension if browser provides generic type
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        if (string.IsNullOrEmpty(mimeType) || mimeType == "application/octet-stream")
+        {
+            var mimeMap = new Dictionary<string, string>
+            {
+                { ".pdf", "application/pdf" },
+                { ".csv", "text/csv" },
+                { ".txt", "text/plain" },
+                { ".json", "application/json" },
+                { ".html", "text/html" },
+                { ".htm", "text/html" },
+                { ".xml", "application/xml" }
+            };
+
+            if (mimeMap.TryGetValue(extension, out var detectedMime))
+            {
+                mimeType = detectedMime;
+            }
+        }
+
+        if (!allowedMimeTypes.Contains(mimeType))
+        {
+            return Results.BadRequest(new
+            {
+                error = $"File type not supported. Allowed: PDF, CSV, TXT, JSON, HTML, XML (provided: {mimeType})"
+            });
+        }
+
+        // Read file bytes
+        using var memoryStream = new MemoryStream();
+        await file.CopyToAsync(memoryStream, cancellationToken);
+        var fileBytes = memoryStream.ToArray();
+
+        // Upload to Knowledge Index
+        var fileId = await knowledgeIndexService.UploadFileToKnowledgeIndexAsync(
+            fileName,
+            fileBytes,
+            mimeType,
+            cancellationToken);
+
+        logger.LogInformation(
+            "File uploaded to Knowledge Index: {FileName}, FileId: {FileId}, Size: {SizeBytes} bytes",
+            fileName,
+            fileId,
+            fileBytes.Length);
+
+        return Results.Accepted(new
+        {
+            fileId,
+            fileName,
+            sizeBytes = fileBytes.Length,
+            mimeType,
+            message = "File uploaded to Knowledge Index. Reference this fileId in your chat messages for context."
+        });
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to upload file to Knowledge Index: {FileName}", file?.FileName ?? "unknown");
+        
+        var errorResponse = ErrorResponseFactory.CreateFromException(
+            ex,
+            500,
+            environment.IsDevelopment());
+
+        return Results.Problem(
+            title: errorResponse.Title,
+            detail: errorResponse.Detail,
+            statusCode: errorResponse.Status,
+            extensions: errorResponse.Extensions
+        );
+    }
+})
+.RequireAuthorization(ScopePolicyName)
+.DisableAntiforgery() // IFormFile uploads don't use CSRF token
+.WithName("UploadToKnowledgeIndex");
+
+// Get Knowledge Index file metadata
+app.MapGet("/api/knowledge-index/files/{fileId}", async (
+    string fileId,
+    KnowledgeIndexService knowledgeIndexService,
+    IHostEnvironment environment,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var (id, filename, sizeBytes, created) = await knowledgeIndexService.GetFileAsync(
+            fileId,
+            cancellationToken);
+
+        return Results.Ok(new
+        {
+            id,
+            filename,
+            sizeBytes,
+            created
+        });
+    }
+    catch (Exception ex)
+    {
+        var errorResponse = ErrorResponseFactory.CreateFromException(
+            ex,
+            500,
+            environment.IsDevelopment());
+
+        return Results.Problem(
+            title: errorResponse.Title,
+            detail: errorResponse.Detail,
+            statusCode: errorResponse.Status,
+            extensions: errorResponse.Extensions
+        );
+    }
+})
+.RequireAuthorization(ScopePolicyName)
+.WithName("GetKnowledgeIndexFile");
+
+// Delete file from Knowledge Index
+app.MapDelete("/api/knowledge-index/files/{fileId}", async (
+    string fileId,
+    KnowledgeIndexService knowledgeIndexService,
+    IHostEnvironment environment,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        await knowledgeIndexService.DeleteFileAsync(fileId, cancellationToken);
+        logger.LogInformation("File deleted from Knowledge Index: {FileId}", fileId);
+        
+        return Results.NoContent();
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to delete file from Knowledge Index: {FileId}", fileId);
+        
+        var errorResponse = ErrorResponseFactory.CreateFromException(
+            ex,
+            500,
+            environment.IsDevelopment());
+
+        return Results.Problem(
+            title: errorResponse.Title,
+            detail: errorResponse.Detail,
+            statusCode: errorResponse.Status,
+            extensions: errorResponse.Extensions
+        );
+    }
+})
+.RequireAuthorization(ScopePolicyName)
+.WithName("DeleteKnowledgeIndexFile");
 
 // List conversations
 app.MapGet("/api/conversations", async (
