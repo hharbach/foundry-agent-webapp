@@ -231,6 +231,9 @@ app.MapPost("/api/chat/stream", async (
     catch (ArgumentException ex) when (ex.Message.Contains("Invalid") && (ex.Message.Contains("attachments") || ex.Message.Contains("image") || ex.Message.Contains("file")))
     {
         // Validation errors from image/file processing - return 400 Bad Request
+        var logger = httpContext.RequestServices.GetRequiredService<ILogger<Program>>();
+        logger.LogWarning("Chat stream attachment validation error: {Message}", ex.Message);
+
         var errorResponse = ErrorResponseFactory.CreateFromException(
             ex, 
             400, 

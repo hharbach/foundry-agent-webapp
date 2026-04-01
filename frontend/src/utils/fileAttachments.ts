@@ -17,9 +17,8 @@ const MAX_DOCUMENT_SIZE = 20 * 1024 * 1024; // 20MB for documents
 const MAX_FILE_COUNT = 10; // Total attachments (images + documents)
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
 
-// Note: Office documents (docx, pptx, xlsx) are NOT supported by Azure Responses API.
-// They cannot be sent via CreateInputFilePart and require special parsing.
-// Only PDF and text-based formats are supported.
+// XLSX is supported by backend preprocessing and inlined as text.
+// Other Office formats remain unsupported.
 const ALLOWED_DOCUMENT_TYPES = [
   'application/pdf',
   'text/plain',
@@ -29,6 +28,8 @@ const ALLOWED_DOCUMENT_TYPES = [
   'text/html',
   'application/xml',
   'text/xml',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
 ];
 
 // Extension to MIME type mapping for files where browser doesn't provide correct MIME type
@@ -42,6 +43,8 @@ const EXTENSION_TO_MIME: Record<string, string> = {
   '.htm': 'text/html',
   '.xml': 'application/xml',
   '.pdf': 'application/pdf',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xls': 'application/vnd.ms-excel',
 };
 
 /**
@@ -99,7 +102,7 @@ export function validateDocumentFile(file: File): FileValidationResult {
   if (!ALLOWED_DOCUMENT_TYPES.includes(mimeType)) {
     return { 
       valid: false, 
-      error: `"${file.name}" format not supported. Use PDF, TXT, MD, CSV, JSON, HTML, or XML` 
+      error: `"${file.name}" format not supported. Use PDF, TXT, MD, CSV, JSON, HTML, XML, or XLSX` 
     };
   }
 

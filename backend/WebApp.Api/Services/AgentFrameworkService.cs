@@ -446,7 +446,8 @@ public class AgentFrameworkService : IDisposable
             "text/html",
             "application/xml",
             "text/xml",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel"
         ];
 
     /// <summary>
@@ -462,7 +463,8 @@ public class AgentFrameworkService : IDisposable
             "text/html",
             "application/xml",
             "text/xml",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel"
         ];
 
     /// <summary>
@@ -600,11 +602,12 @@ public class AgentFrameworkService : IDisposable
                 if (TextBasedDocumentTypes.Contains(mediaType))
                 {
                     string textContent;
-                    if (string.Equals(mediaType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(mediaType, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(mediaType, "application/vnd.ms-excel", StringComparison.OrdinalIgnoreCase))
                     {
                         if (!TryExtractTextFromXlsx(bytes, out textContent, out var spreadsheetError))
                         {
-                            errors.Add($"{label}: {spreadsheetError}");
+                            errors.Add($"{label}: {spreadsheetError}. If this is a legacy .xls file, save it as .xlsx and retry.");
                             continue;
                         }
                     }
