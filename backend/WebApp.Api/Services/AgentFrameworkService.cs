@@ -362,9 +362,35 @@ public class AgentFrameworkService : IDisposable
                     continue;
                 }
 
+                // Skip in-progress signal (no action needed)
+                if (update is StreamingResponseInProgressUpdate)
+                {
+                    _logger.LogDebug("Response in progress");
+                    continue;
+                }
+
+                // Handle content part additions (new SDK variant of content streaming)
+                if (update is StreamingResponseContentPartAddedUpdate)
+                {
+                    _logger.LogDebug("Content part added");
+                    continue;
+                }
+
+                // Handle content part completions
+                if (update is StreamingResponseContentPartDoneUpdate)
+                {
+                    _logger.LogDebug("Content part done");
+                    continue;
+                }
+
                 if (update is StreamingResponseOutputTextDeltaUpdate deltaUpdate)
                 {
                     yield return StreamChunk.Text(deltaUpdate.Delta);
+                }
+                else if (update is StreamingResponseOutputTextDoneUpdate textDoneUpdate)
+                {
+                    // Output text streaming is complete; no action needed at this point
+                    _logger.LogDebug("Output text streaming complete");
                 }
                 else if (update is StreamingResponseOutputItemDoneUpdate itemDoneUpdate)
                 {
