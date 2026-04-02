@@ -8,6 +8,7 @@ using OpenAI.Files;
 using OpenAI.Responses;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Web;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text;
 using WebApp.Api.Models;
@@ -41,6 +42,7 @@ public class AgentFrameworkService : IDisposable
     private static ChatClientAgent? s_cachedAgent;
     private static AgentMetadataResponse? s_cachedMetadata;
     private static readonly SemaphoreSlim s_agentLock = new(1, 1);
+    private static readonly ConcurrentDictionary<string, SpreadsheetArtifactContext> s_spreadsheetArtifacts = new();
     // MI assertion cache (static - user-independent, safe to share across requests)
     private static ManagedIdentityClientAssertion? s_miAssertion;
 
@@ -50,6 +52,8 @@ public class AgentFrameworkService : IDisposable
     private AIProjectClient? _projectClient;
     private bool _disposed = false;
     private ResponseTokenUsage? _lastUsage;
+
+    private sealed record SpreadsheetArtifactContext(string FileId, string FileName);
 
     public AgentFrameworkService(
         IConfiguration configuration,
@@ -318,6 +322,7 @@ public class AgentFrameworkService : IDisposable
             try
             {
                 userMessage = await BuildUserMessageAsync(
+                    conversationId,
                     message,
                     imageDataUris,
                     fileDataUris,
@@ -494,6 +499,12 @@ public class AgentFrameworkService : IDisposable
                 {
                     _lastUsage = completedUpdate.Response.Usage;
                 }
+                else if (update is StreamingResponseFailedUpdate failedUpdate)
+                {
+                    var failureMessage = failedUpdate.ToString();
+                    _logger.LogError("Stream failed update: {Failure}", failureMessage);
+                    throw new InvalidOperationException($"Stream failed: {failureMessage}");
+                }
                 else if (update is StreamingResponseErrorUpdate errorUpdate)
                 {
                     _logger.LogError("Stream error: {Error}", errorUpdate.Message);
@@ -593,20 +604,32 @@ public class AgentFrameworkService : IDisposable
     /// Validates count, size, MIME type, and Base64 format for both images and documents.
     /// </summary>
     private async Task<ResponseItem> BuildUserMessageAsync(
+        string conversationId,
         string message, 
         List<string>? imageDataUris,
         List<FileAttachment>? fileDataUris = null,
         CancellationToken cancellationToken = default)
     {
+        var spreadsheetArtifact = s_spreadsheetArtifacts.TryGetValue(conversationId, out var existingArtifact)
+            ? existingArtifact
+            : null;
+
         if ((imageDataUris == null || imageDataUris.Count == 0) && 
-            (fileDataUris == null || fileDataUris.Count == 0))
+            (fileDataUris == null || fileDataUris.Count == 0) &&
+            spreadsheetArtifact == null)
         {
             return ResponseItem.CreateUserMessageItem(message);
         }
 
+        var messageWithContext = spreadsheetArtifact == null
+            ? message
+            : message +
+              $"\n\nConversation context: the current spreadsheet is '{spreadsheetArtifact.FileName}' with Foundry file_id {spreadsheetArtifact.FileId}. " +
+              "If the user is asking for cloud cost analysis or spreadsheet assessment, use the foundryAssessFromFileId tool with that exact file_id instead of code_interpreter.";
+
         var contentParts = new List<ResponseContentPart>
         {
-            ResponseContentPart.CreateInputTextPart(message)
+            ResponseContentPart.CreateInputTextPart(messageWithContext)
         };
 
         var errors = new List<string>();
@@ -697,6 +720,8 @@ public class AgentFrameworkService : IDisposable
                         file.FileName,
                         bytes,
                         cancellationToken);
+
+                    s_spreadsheetArtifacts[conversationId] = new SpreadsheetArtifactContext(uploadedFileId, file.FileName);
 
                     contentParts.Add(ResponseContentPart.CreateInputTextPart(
                         $"\n\nSpreadsheet attached: '{file.FileName}'. Foundry file_id: {uploadedFileId}. " +
