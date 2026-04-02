@@ -698,10 +698,11 @@ public class AgentFrameworkService : IDisposable
                         bytes,
                         cancellationToken);
 
-                    // For Code Interpreter: only add file reference in text, don't use CreateInputFilePart
-                    // (Responses API only supports PDF for CreateInputFilePart)
                     contentParts.Add(ResponseContentPart.CreateInputTextPart(
-                        $"\n\nSpreadsheet attached as artifact '{file.FileName}' (file_id: {uploadedFileId}). Use code interpreter to analyze this file.\n"));
+                        $"\n\nSpreadsheet attached: '{file.FileName}'. Foundry file_id: {uploadedFileId}. " +
+                        "Do not attempt to read this spreadsheet as an input_file or inline document. " +
+                        "If the user is asking for cloud cost assessment on this spreadsheet, use the foundryAssessFromFileId tool with this exact file_id. " +
+                        "If required parameters are missing, ask the user for sourceCloud, targetClouds, and optimizationMode first.\n"));
                 }
                 else if (TextBasedDocumentTypes.Contains(mediaType))
                 {
