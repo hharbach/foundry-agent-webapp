@@ -289,6 +289,20 @@ public class AgentFrameworkService : IDisposable
 
         CreateResponseOptions options = new() { StreamingEnabled = true };
 
+        if (s_spreadsheetArtifacts.TryGetValue(conversationId, out var spreadsheetArtifactForTools))
+        {
+            var containerConfiguration = CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration(
+                [spreadsheetArtifactForTools.FileId]);
+            options.Tools.Add(
+                ResponseTool.CreateCodeInterpreterTool(
+                    new CodeInterpreterToolContainer(containerConfiguration)));
+
+            _logger.LogInformation(
+                "Enabled request-scoped code interpreter tool for conversation {ConversationId} with FileId={FileId}",
+                conversationId,
+                spreadsheetArtifactForTools.FileId);
+        }
+
         // Always bind to conversation — the conversation maintains MCP approval state
         ProjectResponsesClient responsesClient
             = GetProjectClient().OpenAI.GetProjectResponsesClientForAgent(
@@ -501,13 +515,24 @@ public class AgentFrameworkService : IDisposable
                 }
                 else if (update is StreamingResponseFailedUpdate failedUpdate)
                 {
-                    var failureMessage = failedUpdate.ToString();
-                    _logger.LogError("Stream failed update: {Failure}", failureMessage);
+                    var response = failedUpdate.Response;
+                    var failureMessage = response.Error?.Message
+                        ?? response.IncompleteStatusDetails?.Reason?.ToString()
+                        ?? response.Status?.ToString()
+                        ?? failedUpdate.GetType().Name;
+
+                    _logger.LogError(
+                        "Stream failed update: ResponseId={ResponseId}, Status={Status}, ErrorCode={ErrorCode}, ErrorMessage={ErrorMessage}, IncompleteReason={IncompleteReason}",
+                        response.Id,
+                        response.Status,
+                        response.Error?.Code,
+                        response.Error?.Message,
+                        response.IncompleteStatusDetails?.Reason);
                     throw new InvalidOperationException($"Stream failed: {failureMessage}");
                 }
                 else if (update is StreamingResponseErrorUpdate errorUpdate)
                 {
-                    _logger.LogError("Stream error: {Error}", errorUpdate.Message);
+                    _logger.LogError("Stream error: Code={Code}, Param={Param}, Error={Error}", errorUpdate.Code, errorUpdate.Param, errorUpdate.Message);
                     throw new InvalidOperationException($"Stream error: {errorUpdate.Message}");
                 }
                 else
@@ -625,7 +650,7 @@ public class AgentFrameworkService : IDisposable
             ? message
             : message +
               $"\n\nConversation context: the current spreadsheet is '{spreadsheetArtifact.FileName}' with Foundry file_id {spreadsheetArtifact.FileId}. " +
-              "If the user is asking for cloud cost analysis or spreadsheet assessment, use the foundryAssessFromFileId tool with that exact file_id instead of code_interpreter.";
+              "Use code_interpreter with the attached spreadsheet file already available in the tool container to analyze this file and answer the user's question directly.";
 
         var contentParts = new List<ResponseContentPart>
         {
@@ -726,8 +751,8 @@ public class AgentFrameworkService : IDisposable
                     contentParts.Add(ResponseContentPart.CreateInputTextPart(
                         $"\n\nSpreadsheet attached: '{file.FileName}'. Foundry file_id: {uploadedFileId}. " +
                         "Do not attempt to read this spreadsheet as an input_file or inline document. " +
-                        "If the user is asking for cloud cost assessment on this spreadsheet, use the foundryAssessFromFileId tool with this exact file_id. " +
-                        "If required parameters are missing, ask the user for sourceCloud, targetClouds, and optimizationMode first.\n"));
+                        "Use code_interpreter with this spreadsheet file available in the tool container to inspect the workbook and answer the user's question directly. " +
+                        "If key pricing assumptions are missing, ask focused follow-up questions first.\n"));
                 }
                 else if (TextBasedDocumentTypes.Contains(mediaType))
                 {
