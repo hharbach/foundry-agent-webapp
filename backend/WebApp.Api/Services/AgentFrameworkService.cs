@@ -698,9 +698,10 @@ public class AgentFrameworkService : IDisposable
                         bytes,
                         cancellationToken);
 
+                    // For Code Interpreter: only add file reference in text, don't use CreateInputFilePart
+                    // (Responses API only supports PDF for CreateInputFilePart)
                     contentParts.Add(ResponseContentPart.CreateInputTextPart(
-                        $"\n\nSpreadsheet attached as artifact '{file.FileName}' (file_id: {uploadedFileId}). Use code interpreter to analyze it.\n"));
-                    contentParts.Add(ResponseContentPart.CreateInputFilePart(uploadedFileId));
+                        $"\n\nSpreadsheet attached as artifact '{file.FileName}' (file_id: {uploadedFileId}). Use code interpreter to analyze this file.\n"));
                 }
                 else if (TextBasedDocumentTypes.Contains(mediaType))
                 {
