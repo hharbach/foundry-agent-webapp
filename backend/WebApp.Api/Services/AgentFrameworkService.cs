@@ -513,21 +513,41 @@ public class AgentFrameworkService : IDisposable
                 {
                     _lastUsage = completedUpdate.Response.Usage;
                 }
+                else if (update is StreamingResponseCodeInterpreterCallInProgressUpdate)
+                {
+                    _logger.LogDebug("Code interpreter call in progress");
+                }
+                else if (update is StreamingResponseCodeInterpreterCallCodeDeltaUpdate)
+                {
+                    // Code delta updates are streamed during code execution - consume them
+                    _logger.LogDebug("Code delta update received");
+                }
+                else if (update is StreamingResponseCodeInterpreterCallCodeDoneUpdate)
+                {
+                    _logger.LogDebug("Code interpreter call code done");
+                }
+                else if (update is StreamingResponseCodeInterpreterCallInterpretingUpdate)
+                {
+                    _logger.LogDebug("Code interpreter interpreting");
+                }
+
+
+
                 else if (update is StreamingResponseFailedUpdate failedUpdate)
                 {
                     var response = failedUpdate.Response;
-                    var failureMessage = response.Error?.Message
-                        ?? response.IncompleteStatusDetails?.Reason?.ToString()
-                        ?? response.Status?.ToString()
+                    var failureMessage = response?.Error?.Message
+                        ?? response?.IncompleteStatusDetails?.Reason?.ToString()
+                        ?? response?.Status?.ToString()
                         ?? failedUpdate.GetType().Name;
 
                     _logger.LogError(
                         "Stream failed update: ResponseId={ResponseId}, Status={Status}, ErrorCode={ErrorCode}, ErrorMessage={ErrorMessage}, IncompleteReason={IncompleteReason}",
-                        response.Id,
-                        response.Status,
-                        response.Error?.Code,
-                        response.Error?.Message,
-                        response.IncompleteStatusDetails?.Reason);
+                        response?.Id,
+                        response?.Status,
+                        response?.Error?.Code,
+                        response?.Error?.Message,
+                        response?.IncompleteStatusDetails?.Reason);
                     throw new InvalidOperationException($"Stream failed: {failureMessage}");
                 }
                 else if (update is StreamingResponseErrorUpdate errorUpdate)
