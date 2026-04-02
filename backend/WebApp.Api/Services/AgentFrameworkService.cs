@@ -323,7 +323,7 @@ public class AgentFrameworkService : IDisposable
                     fileDataUris,
                     cancellationToken);
             }
-            catch (ArgumentException ex)
+            catch (Exception ex)
             {
                 var fileSummary = fileDataUris == null
                     ? "none"
@@ -331,7 +331,7 @@ public class AgentFrameworkService : IDisposable
 
                 _logger.LogError(
                     ex,
-                    "Attachment validation failed for conversation {ConversationId}. FileSummary={FileSummary}",
+                    "Failed to build user message for conversation {ConversationId}. FileSummary={FileSummary}",
                     conversationId,
                     fileSummary);
                 throw;
@@ -347,11 +347,44 @@ public class AgentFrameworkService : IDisposable
 
         var updateCount = 0;
 
-        await foreach (StreamingResponseUpdate update
-            in responsesClient.CreateResponseStreamingAsync(
-                options: options,
-                cancellationToken: cancellationToken))
+        IAsyncEnumerable<StreamingResponseUpdate> streamUpdates;
+        try
         {
+            streamUpdates = responsesClient.CreateResponseStreamingAsync(
+                options: options,
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to start streaming for conversation {ConversationId}",
+                conversationId);
+            throw;
+        }
+
+        await using var streamEnumerator = streamUpdates.GetAsyncEnumerator(cancellationToken);
+        while (true)
+        {
+            StreamingResponseUpdate update;
+            try
+            {
+                if (!await streamEnumerator.MoveNextAsync())
+                {
+                    break;
+                }
+
+                update = streamEnumerator.Current;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Streaming failed before next update for conversation {ConversationId}",
+                    conversationId);
+                throw;
+            }
+
             updateCount++;
 
                 // Capture response ID from created event (needed for MCP approval resume)
