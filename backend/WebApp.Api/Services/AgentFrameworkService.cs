@@ -360,23 +360,30 @@ public class AgentFrameworkService : IDisposable
             var spreadsheetArtifact = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken);
             if (spreadsheetArtifact != null)
             {
-                var modelDeploymentName = await ResolveModelDeploymentNameAsync(cancellationToken);
-                var containerConfiguration = CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration(
-                    [spreadsheetArtifact.FileId]);
+                // Keep final response on the agent-bound client (preserves internal tools/APIs),
+                // but enrich context with a hidden workbook extraction preflight.
+                var workbookSummary = await BuildSpreadsheetSummaryAsync(
+                    spreadsheetArtifact,
+                    message,
+                    cancellationToken);
 
-                options.Tools.Add(
-                    ResponseTool.CreateCodeInterpreterTool(
-                        new CodeInterpreterToolContainer(containerConfiguration)));
-                options.ToolChoice = ResponseToolChoice.CreateRequiredChoice();
+                if (!string.IsNullOrWhiteSpace(workbookSummary))
+                {
+                    options.InputItems.Add(ResponseItem.CreateUserMessageItem(
+                        "Workbook extraction snapshot (generated from code_interpreter). " +
+                        "Use this as grounded inventory context for the current request:\n" +
+                        workbookSummary));
+                }
 
-                // Use model-bound responses for spreadsheet turns so code interpreter tools can be attached.
-                responsesClient = GetProjectClient().OpenAI.GetProjectResponsesClientForModel(modelDeploymentName);
+                responsesClient = GetProjectClient().OpenAI.GetProjectResponsesClientForAgent(
+                    new AgentReference(_agentId, _agentVersion),
+                    conversationId);
 
                 _logger.LogInformation(
-                    "Spreadsheet mode enabled for conversation {ConversationId}: Model={Model}, FileId={FileId}",
+                    "Spreadsheet preflight summary attached for conversation {ConversationId}: FileId={FileId}, SummaryLength={SummaryLength}",
                     conversationId,
-                    modelDeploymentName,
-                    spreadsheetArtifact.FileId);
+                    spreadsheetArtifact.FileId,
+                    workbookSummary?.Length ?? 0);
             }
             else
             {
@@ -1378,6 +1385,65 @@ public class AgentFrameworkService : IDisposable
             "Unable to resolve model deployment name for spreadsheet code interpreter mode. " +
             "Set AI_MODEL_DEPLOYMENT (or AZURE_AI_FOUNDRY_MODEL_DEPLOYMENT)."
         );
+    }
+
+    private async Task<string> BuildSpreadsheetSummaryAsync(
+        SpreadsheetArtifactContext spreadsheetArtifact,
+        string userRequest,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var modelDeploymentName = await ResolveModelDeploymentNameAsync(cancellationToken);
+            var modelResponsesClient = GetProjectClient().OpenAI.GetProjectResponsesClientForModel(modelDeploymentName);
+
+            var preflightOptions = new CreateResponseOptions
+            {
+                StreamingEnabled = true
+            };
+
+            var containerConfiguration = CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration(
+                [spreadsheetArtifact.FileId]);
+
+            preflightOptions.Tools.Add(
+                ResponseTool.CreateCodeInterpreterTool(
+                    new CodeInterpreterToolContainer(containerConfiguration)));
+            preflightOptions.ToolChoice = ResponseToolChoice.CreateRequiredChoice();
+
+            preflightOptions.InputItems.Add(ResponseItem.CreateUserMessageItem(
+                "Analyze the attached workbook and return a compact, factual inventory summary only. " +
+                "Include: worksheet names, total row counts per relevant sheet, detected resource/service types, regions, " +
+                "sku/size fields, quantity fields, and any missing columns required for cloud cost comparison. " +
+                "Do not mention limitations or request re-upload.\n" +
+                $"Current user request: {userRequest}"));
+
+            var summaryBuilder = new StringBuilder();
+            await foreach (var update in modelResponsesClient.CreateResponseStreamingAsync(preflightOptions, cancellationToken))
+            {
+                if (update is StreamingResponseOutputTextDeltaUpdate delta && !string.IsNullOrEmpty(delta.Delta))
+                {
+                    summaryBuilder.Append(delta.Delta);
+                }
+            }
+
+            var summary = summaryBuilder.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(summary))
+            {
+                _logger.LogWarning(
+                    "Spreadsheet preflight produced no summary text for FileId={FileId}",
+                    spreadsheetArtifact.FileId);
+            }
+
+            return summary;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Spreadsheet preflight extraction failed for FileId={FileId}; continuing without preflight summary",
+                spreadsheetArtifact.FileId);
+            return string.Empty;
+        }
     }
 
     /// <summary>
