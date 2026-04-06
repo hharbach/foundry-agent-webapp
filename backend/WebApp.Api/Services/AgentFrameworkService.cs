@@ -667,14 +667,16 @@ public class AgentFrameworkService : IDisposable
             (fileDataUris == null || fileDataUris.Count == 0) &&
             spreadsheetArtifact == null)
         {
-            return ResponseItem.CreateUserMessageItem(message);
+            throw new ArgumentException(
+                "XLSX file is required. Attach an .xlsx spreadsheet before sending this request.");
         }
 
         var messageWithContext = spreadsheetArtifact == null
             ? message
             : message +
               $"\n\nConversation context: the current spreadsheet is '{spreadsheetArtifact.FileName}' with Foundry file_id {spreadsheetArtifact.FileId}. " +
-              "Use code_interpreter with the attached spreadsheet file already available in the tool container to analyze this file and answer the user's question directly.";
+              "You MUST analyze this spreadsheet using the agent's code_interpreter capability in this response. " +
+              "Do not defer execution, do not say you will follow up later, and return complete results now.";
 
         var contentParts = new List<ResponseContentPart>
         {
@@ -723,6 +725,7 @@ public class AgentFrameworkService : IDisposable
         }
 
         // Process file attachments
+        var spreadsheetAttachedInRequest = false;
         if (fileDataUris != null && fileDataUris.Count > 0)
         {
             // Enforce maximum file count
@@ -765,6 +768,8 @@ public class AgentFrameworkService : IDisposable
 
                 if (SpreadsheetDocumentTypes.Contains(mediaType))
                 {
+                    spreadsheetAttachedInRequest = true;
+
                     var uploadedFileId = await UploadSpreadsheetArtifactAsync(
                         file.FileName,
                         bytes,
@@ -775,7 +780,8 @@ public class AgentFrameworkService : IDisposable
                     contentParts.Add(ResponseContentPart.CreateInputTextPart(
                         $"\n\nSpreadsheet attached: '{file.FileName}'. Foundry file_id: {uploadedFileId}. " +
                         "Do not attempt to read this spreadsheet as an input_file or inline document. " +
-                        "Use code_interpreter with this spreadsheet file available in the tool container to inspect the workbook and answer the user's question directly. " +
+                        "Use code_interpreter to inspect the workbook and answer the user's question directly in this response. " +
+                        "Do not defer execution and do not respond with 'I will update you later'. " +
                         "If key pricing assumptions are missing, ask focused follow-up questions first.\n"));
                 }
                 else if (TextBasedDocumentTypes.Contains(mediaType))
@@ -797,6 +803,12 @@ public class AgentFrameworkService : IDisposable
         if (errors.Count > 0)
         {
             throw new ArgumentException($"Invalid attachments: {string.Join("; ", errors)}");
+        }
+
+        if (spreadsheetArtifact == null && !spreadsheetAttachedInRequest)
+        {
+            throw new ArgumentException(
+                "XLSX file is required. Attach an .xlsx spreadsheet to start analysis.");
         }
 
         return ResponseItem.CreateUserMessageItem(contentParts);
