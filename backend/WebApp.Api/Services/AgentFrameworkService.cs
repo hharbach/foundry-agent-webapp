@@ -9,6 +9,7 @@ using OpenAI.Responses;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Web;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -775,14 +776,27 @@ public class AgentFrameworkService : IDisposable
                     continue;
                 }
 
-                if (!AllowedDocumentTypes.Contains(mediaType))
+                var effectiveMediaType = ResolveDocumentMediaType(file, mediaType);
+
+                _logger.LogInformation(
+                    "Attachment classification: FileName={FileName}, DeclaredMime={DeclaredMime}, DetectedMime={DetectedMime}, EffectiveMime={EffectiveMime}, Size={Size}",
+                    file.FileName,
+                    file.MimeType,
+                    mediaType,
+                    effectiveMediaType,
+                    bytes.Length);
+
+                if (!AllowedDocumentTypes.Contains(effectiveMediaType))
                 {
                     errors.Add($"{label}: Unsupported type '{mediaType}'");
                     continue;
                 }
 
-                // Verify MIME type matches what was declared
-                if (!string.Equals(mediaType, file.MimeType.ToLowerInvariant(), StringComparison.OrdinalIgnoreCase))
+                // Keep strict MIME mismatch checks except for normalized spreadsheet uploads.
+                var declaredMimeType = file.MimeType.ToLowerInvariant();
+                var isSpreadsheetUpload = SpreadsheetDocumentTypes.Contains(effectiveMediaType);
+                if (!isSpreadsheetUpload
+                    && !string.Equals(mediaType, declaredMimeType, StringComparison.OrdinalIgnoreCase))
                 {
                     errors.Add($"{label}: MIME type mismatch (declared: {file.MimeType}, detected: {mediaType})");
                     continue;
@@ -795,7 +809,7 @@ public class AgentFrameworkService : IDisposable
                     continue;
                 }
 
-                if (SpreadsheetDocumentTypes.Contains(mediaType))
+                if (SpreadsheetDocumentTypes.Contains(effectiveMediaType))
                 {
                     var uploadedFileId = await UploadSpreadsheetArtifactAsync(
                         file.FileName,
@@ -811,17 +825,17 @@ public class AgentFrameworkService : IDisposable
                         "Do not defer execution and do not respond with 'I will update you later'. " +
                         "If key pricing assumptions are missing, ask focused follow-up questions first.\n"));
                 }
-                else if (TextBasedDocumentTypes.Contains(mediaType))
+                else if (TextBasedDocumentTypes.Contains(effectiveMediaType))
                 {
                     var textContent = Encoding.UTF8.GetString(bytes);
                     var inlineText = $"\n\n--- Content of {file.FileName} ---\n{textContent}\n--- End of {file.FileName} ---\n";
                     contentParts.Add(ResponseContentPart.CreateInputTextPart(inlineText));
                 }
-                else if (FileInputTypes.Contains(mediaType))
+                else if (FileInputTypes.Contains(effectiveMediaType))
                 {
                     contentParts.Add(ResponseContentPart.CreateInputFilePart(
                         BinaryData.FromBytes(bytes),
-                        mediaType,
+                        effectiveMediaType,
                         file.FileName));
                 }
             }
@@ -855,6 +869,39 @@ public class AgentFrameworkService : IDisposable
             bytes.Length);
 
         return uploaded.Value.Id;
+    }
+
+    private static string ResolveDocumentMediaType(FileAttachment file, string detectedMediaType)
+    {
+        var normalizedDetected = detectedMediaType.ToLowerInvariant();
+        var declaredMimeType = file.MimeType.ToLowerInvariant();
+
+        if (SpreadsheetDocumentTypes.Contains(normalizedDetected))
+        {
+            return normalizedDetected;
+        }
+
+        if (SpreadsheetDocumentTypes.Contains(declaredMimeType))
+        {
+            return declaredMimeType;
+        }
+
+        if (string.Equals(normalizedDetected, "application/octet-stream", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(declaredMimeType, "application/octet-stream", StringComparison.OrdinalIgnoreCase))
+        {
+            var extension = Path.GetExtension(file.FileName)?.ToLowerInvariant();
+            if (extension == ".xlsx")
+            {
+                return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            }
+
+            if (extension == ".xls")
+            {
+                return "application/vnd.ms-excel";
+            }
+        }
+
+        return normalizedDetected;
     }
 
     private async Task<SpreadsheetArtifactContext?> GetSpreadsheetArtifactContextAsync(
