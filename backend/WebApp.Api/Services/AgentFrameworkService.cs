@@ -31,6 +31,7 @@ public class AgentFrameworkService : IDisposable
     private readonly string _agentEndpoint;
     private readonly string _agentId;
     private readonly string? _agentVersion;
+    private readonly string? _configuredModelDeploymentName;
     private readonly ILogger<AgentFrameworkService> _logger;
     private readonly IHttpContextAccessor? _httpContextAccessor;
     private readonly string? _backendClientId;
@@ -81,6 +82,11 @@ public class AgentFrameworkService : IDisposable
         _agentVersion = string.IsNullOrWhiteSpace(configuration["AI_AGENT_VERSION"])
             ? null
             : configuration["AI_AGENT_VERSION"];
+
+        _configuredModelDeploymentName =
+            configuration["AI_MODEL_DEPLOYMENT"]
+            ?? configuration["AZURE_AI_FOUNDRY_MODEL_DEPLOYMENT"]
+            ?? configuration["MODEL_DEPLOYMENT_NAME"];
 
         _logger.LogDebug(
             "Initializing AgentFrameworkService: endpoint={Endpoint}, agentId={AgentId}, version={Version}", 
@@ -295,29 +301,18 @@ public class AgentFrameworkService : IDisposable
             mcpApproval != null);
 
         CreateResponseOptions options = new() { StreamingEnabled = true };
-
-        var spreadsheetArtifact = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken);
-        if (spreadsheetArtifact != null)
-        {
-            // Foundry agent-bound Responses requests reject request-level tools payloads.
-            // Keep spreadsheet context in conversation/user message prompts instead.
-            _logger.LogInformation(
-                "Spreadsheet context available for conversation {ConversationId} with FileId={FileId}",
-                conversationId,
-                spreadsheetArtifact.FileId);
-        }
-
-        // Always bind to conversation — the conversation maintains MCP approval state
-        ProjectResponsesClient responsesClient
-            = GetProjectClient().OpenAI.GetProjectResponsesClientForAgent(
-                new AgentReference(_agentId, _agentVersion), 
-                conversationId);
+        ProjectResponsesClient responsesClient;
 
         // If continuing from MCP approval, add approval response items
         // Don't set PreviousResponseId — the API rejects it with conversation binding,
         // and the conversation already tracks the pending MCP state
         if (!string.IsNullOrEmpty(previousResponseId) && mcpApproval != null)
         {
+            // MCP approval flow must stay on the agent-bound conversation client.
+            responsesClient = GetProjectClient().OpenAI.GetProjectResponsesClientForAgent(
+                new AgentReference(_agentId, _agentVersion),
+                conversationId);
+
             options.InputItems.Add(ResponseItem.CreateMcpApprovalResponseItem(
                 mcpApproval.ApprovalRequestId,
                 mcpApproval.Approved));
@@ -361,6 +356,35 @@ public class AgentFrameworkService : IDisposable
             }
 
             options.InputItems.Add(userMessage);
+
+            var spreadsheetArtifact = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken);
+            if (spreadsheetArtifact != null)
+            {
+                var modelDeploymentName = await ResolveModelDeploymentNameAsync(cancellationToken);
+                var containerConfiguration = CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration(
+                    [spreadsheetArtifact.FileId]);
+
+                options.Tools.Add(
+                    ResponseTool.CreateCodeInterpreterTool(
+                        new CodeInterpreterToolContainer(containerConfiguration)));
+                options.ToolChoice = ResponseToolChoice.CreateRequiredChoice();
+
+                // Use model-bound responses for spreadsheet turns so code interpreter tools can be attached.
+                responsesClient = GetProjectClient().OpenAI.GetProjectResponsesClientForModel(modelDeploymentName);
+
+                _logger.LogInformation(
+                    "Spreadsheet mode enabled for conversation {ConversationId}: Model={Model}, FileId={FileId}",
+                    conversationId,
+                    modelDeploymentName,
+                    spreadsheetArtifact.FileId);
+            }
+            else
+            {
+                // Standard chat mode stays on agent-bound conversation client.
+                responsesClient = GetProjectClient().OpenAI.GetProjectResponsesClientForAgent(
+                    new AgentReference(_agentId, _agentVersion),
+                    conversationId);
+            }
         }
 
         // Dictionary to collect file search results for quote extraction
@@ -1332,6 +1356,28 @@ public class AgentFrameworkService : IDisposable
         var agent = await GetAgentAsync(cancellationToken);
         var agentVersion = agent.GetService<AgentVersion>();
         return agentVersion?.Name ?? _agentId;
+    }
+
+    private async Task<string> ResolveModelDeploymentNameAsync(CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(_configuredModelDeploymentName))
+        {
+            return _configuredModelDeploymentName;
+        }
+
+        var agent = await GetAgentAsync(cancellationToken);
+        var agentVersion = agent.GetService<AgentVersion>();
+        var definition = agentVersion?.Definition as PromptAgentDefinition;
+
+        if (!string.IsNullOrWhiteSpace(definition?.Model))
+        {
+            return definition.Model;
+        }
+
+        throw new InvalidOperationException(
+            "Unable to resolve model deployment name for spreadsheet code interpreter mode. " +
+            "Set AI_MODEL_DEPLOYMENT (or AZURE_AI_FOUNDRY_MODEL_DEPLOYMENT)."
+        );
     }
 
     /// <summary>
