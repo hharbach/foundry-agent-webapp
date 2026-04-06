@@ -306,6 +306,7 @@ public class AgentFrameworkService : IDisposable
 
         CreateResponseOptions options = new() { StreamingEnabled = true };
         ProjectResponsesClient responsesClient;
+        SpreadsheetArtifactContext? spreadsheetArtifactContext = null;
 
         // If continuing from MCP approval, add approval response items
         // Don't set PreviousResponseId — the API rejects it with conversation binding,
@@ -361,13 +362,13 @@ public class AgentFrameworkService : IDisposable
 
             options.InputItems.Add(userMessage);
 
-            var spreadsheetArtifact = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken);
-            if (spreadsheetArtifact != null)
+            spreadsheetArtifactContext = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken);
+            if (spreadsheetArtifactContext != null)
             {
                 // Keep final response on the agent-bound client (preserves internal tools/APIs),
                 // but enrich context with a hidden workbook extraction preflight.
                 var workbookSummary = await BuildSpreadsheetSummaryAsync(
-                    spreadsheetArtifact,
+                    spreadsheetArtifactContext,
                     message,
                     cancellationToken);
 
@@ -386,7 +387,7 @@ public class AgentFrameworkService : IDisposable
                 _logger.LogInformation(
                     "Spreadsheet preflight summary attached for conversation {ConversationId}: FileId={FileId}, SummaryLength={SummaryLength}",
                     conversationId,
-                    spreadsheetArtifact.FileId,
+                    spreadsheetArtifactContext.FileId,
                     workbookSummary?.Length ?? 0);
             }
             else
@@ -402,7 +403,9 @@ public class AgentFrameworkService : IDisposable
         var fileSearchQuotes = new Dictionary<string, string>();
         // Track the current response ID for MCP approval resume flow
         string? currentResponseId = null;
-        var hasSpreadsheetContext = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken) != null;
+        var hasSpreadsheetContext = spreadsheetArtifactContext != null;
+        var bufferedSpreadsheetText = hasSpreadsheetContext ? new StringBuilder() : null;
+        var spreadsheetUnavailableDetected = false;
 
         var updateCount = 0;
 
@@ -477,7 +480,14 @@ public class AgentFrameworkService : IDisposable
 
                 if (update is StreamingResponseOutputTextDeltaUpdate deltaUpdate)
                 {
-                    yield return StreamChunk.Text(deltaUpdate.Delta);
+                    if (hasSpreadsheetContext)
+                    {
+                        bufferedSpreadsheetText!.Append(deltaUpdate.Delta);
+                    }
+                    else
+                    {
+                        yield return StreamChunk.Text(deltaUpdate.Delta);
+                    }
                 }
                 else if (update is StreamingResponseOutputTextDoneUpdate textDoneUpdate)
                 {
@@ -543,6 +553,8 @@ public class AgentFrameworkService : IDisposable
                         if (!string.IsNullOrWhiteSpace(responseText)
                             && s_spreadsheetUnavailableRegex.IsMatch(responseText))
                         {
+                            spreadsheetUnavailableDetected = true;
+
                             var snippet = responseText.Length <= 240
                                 ? responseText
                                 : responseText[..240] + "...";
@@ -631,11 +643,90 @@ public class AgentFrameworkService : IDisposable
                 }
         }
 
+        if (hasSpreadsheetContext)
+        {
+            if (spreadsheetUnavailableDetected)
+            {
+                _logger.LogWarning(
+                    "Triggering spreadsheet recovery retry for conversation {ConversationId}",
+                    conversationId);
+
+                var recoveredText = await RunSpreadsheetRecoveryRetryAsync(
+                    conversationId,
+                    spreadsheetArtifactContext!,
+                    message,
+                    cancellationToken);
+
+                if (!string.IsNullOrWhiteSpace(recoveredText))
+                {
+                    yield return StreamChunk.Text(recoveredText);
+                }
+                else if (bufferedSpreadsheetText is { Length: > 0 })
+                {
+                    yield return StreamChunk.Text(bufferedSpreadsheetText.ToString());
+                }
+            }
+            else if (bufferedSpreadsheetText is { Length: > 0 })
+            {
+                yield return StreamChunk.Text(bufferedSpreadsheetText.ToString());
+            }
+        }
+
         _logger.LogInformation(
             "Completed streaming for conversation: {ConversationId}. UpdateCount={UpdateCount}, HasResponseId={HasResponseId}",
             conversationId,
             updateCount,
             !string.IsNullOrEmpty(currentResponseId));
+    }
+
+    private async Task<string> RunSpreadsheetRecoveryRetryAsync(
+        string conversationId,
+        SpreadsheetArtifactContext spreadsheetArtifact,
+        string originalUserMessage,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var options = new CreateResponseOptions { StreamingEnabled = true };
+            options.InputItems.Add(ResponseItem.CreateUserMessageItem(
+                "The previous assistant response incorrectly reported the spreadsheet as inaccessible. " +
+                $"The spreadsheet is available as Foundry file_id {spreadsheetArtifact.FileId} (name: {spreadsheetArtifact.FileName}). " +
+                "Use code_interpreter now and answer the request directly with concrete results. " +
+                "Do not ask for re-upload and do not mention file accessibility limitations.\n" +
+                $"Original user request: {originalUserMessage}"));
+
+            var responsesClient = GetProjectClient().OpenAI.GetProjectResponsesClientForAgent(
+                new AgentReference(_agentId, _agentVersion),
+                conversationId);
+
+            var outputBuilder = new StringBuilder();
+            await foreach (var update in responsesClient.CreateResponseStreamingAsync(options, cancellationToken))
+            {
+                if (update is StreamingResponseOutputTextDeltaUpdate delta && !string.IsNullOrEmpty(delta.Delta))
+                {
+                    outputBuilder.Append(delta.Delta);
+                }
+            }
+
+            var output = outputBuilder.ToString().Trim();
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                _logger.LogWarning(
+                    "Spreadsheet recovery retry produced no output: ConversationId={ConversationId}, FileId={FileId}",
+                    conversationId,
+                    spreadsheetArtifact.FileId);
+            }
+
+            return output;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Spreadsheet recovery retry failed for conversation {ConversationId}",
+                conversationId);
+            return string.Empty;
+        }
     }
 
     /// <summary>
