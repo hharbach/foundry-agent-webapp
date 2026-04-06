@@ -667,8 +667,7 @@ public class AgentFrameworkService : IDisposable
             (fileDataUris == null || fileDataUris.Count == 0) &&
             spreadsheetArtifact == null)
         {
-            throw new ArgumentException(
-                "XLSX file is required. Attach an .xlsx spreadsheet before sending this request.");
+            return ResponseItem.CreateUserMessageItem(message);
         }
 
         var messageWithContext = spreadsheetArtifact == null
@@ -725,7 +724,6 @@ public class AgentFrameworkService : IDisposable
         }
 
         // Process file attachments
-        var spreadsheetAttachedInRequest = false;
         if (fileDataUris != null && fileDataUris.Count > 0)
         {
             // Enforce maximum file count
@@ -768,8 +766,6 @@ public class AgentFrameworkService : IDisposable
 
                 if (SpreadsheetDocumentTypes.Contains(mediaType))
                 {
-                    spreadsheetAttachedInRequest = true;
-
                     var uploadedFileId = await UploadSpreadsheetArtifactAsync(
                         file.FileName,
                         bytes,
@@ -803,12 +799,6 @@ public class AgentFrameworkService : IDisposable
         if (errors.Count > 0)
         {
             throw new ArgumentException($"Invalid attachments: {string.Join("; ", errors)}");
-        }
-
-        if (spreadsheetArtifact == null && !spreadsheetAttachedInRequest)
-        {
-            throw new ArgumentException(
-                "XLSX file is required. Attach an .xlsx spreadsheet to start analysis.");
         }
 
         return ResponseItem.CreateUserMessageItem(contentParts);
