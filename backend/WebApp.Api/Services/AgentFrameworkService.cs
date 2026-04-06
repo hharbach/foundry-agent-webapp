@@ -306,30 +306,10 @@ public class AgentFrameworkService : IDisposable
                 ResponseTool.CreateCodeInterpreterTool(
                     new CodeInterpreterToolContainer(containerConfiguration)));
 
-            // Override agent instructions to force direct code_interpreter analysis 
-            // instead of the async foundryAssessFromFileId OpenAPI tool path. 
-            // The agent's Foundry system prompt defers results to a future callback 
-            // that never arrives; this forces synchronous in-turn execution.
-            options.Instructions =
-                $"A spreadsheet named '{spreadsheetArtifactForTools.FileName}' (file_id: {spreadsheetArtifactForTools.FileId}) " +
-                "is attached to the code_interpreter tool container for this request. " +
-                "You MUST use the code_interpreter tool to read and analyze this spreadsheet directly. " +
-                "Do NOT invoke foundryAssessFromFileId or any other external tool. " +
-                "Do NOT tell the user you have 'initiated' something or that you will 'update them later'. " +
-                "Perform the complete analysis NOW and return the full results in this response. " +
-                "Start by loading the spreadsheet with pandas and summarizing its structure, then answer the user's question completely.";
-
             _logger.LogInformation(
                 "Enabled request-scoped code interpreter tool for conversation {ConversationId} with FileId={FileId}",
                 conversationId,
                 spreadsheetArtifactForTools.FileId);
-        }
-
-        if (string.IsNullOrWhiteSpace(options.Instructions))
-        {
-            options.Instructions =
-                "Return complete results in this response turn. " +
-                "Do not say you will follow up later or update the user asynchronously.";
         }
 
         // Always bind to conversation — the conversation maintains MCP approval state
