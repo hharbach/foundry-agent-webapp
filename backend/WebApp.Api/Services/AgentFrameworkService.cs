@@ -296,20 +296,15 @@ public class AgentFrameworkService : IDisposable
 
         CreateResponseOptions options = new() { StreamingEnabled = true };
 
-        var spreadsheetArtifactForTools = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken);
-
-        if (spreadsheetArtifactForTools != null)
+        var spreadsheetArtifact = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken);
+        if (spreadsheetArtifact != null)
         {
-            var containerConfiguration = CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration(
-                [spreadsheetArtifactForTools.FileId]);
-            options.Tools.Add(
-                ResponseTool.CreateCodeInterpreterTool(
-                    new CodeInterpreterToolContainer(containerConfiguration)));
-
+            // Foundry agent-bound Responses requests reject request-level tools payloads.
+            // Keep spreadsheet context in conversation/user message prompts instead.
             _logger.LogInformation(
-                "Enabled request-scoped code interpreter tool for conversation {ConversationId} with FileId={FileId}",
+                "Spreadsheet context available for conversation {ConversationId} with FileId={FileId}",
                 conversationId,
-                spreadsheetArtifactForTools.FileId);
+                spreadsheetArtifact.FileId);
         }
 
         // Always bind to conversation — the conversation maintains MCP approval state
