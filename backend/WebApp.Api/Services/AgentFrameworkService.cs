@@ -11,6 +11,7 @@ using Microsoft.Identity.Web;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using WebApp.Api.Models;
 
 namespace WebApp.Api.Services;
@@ -43,6 +44,12 @@ public class AgentFrameworkService : IDisposable
     private static AgentMetadataResponse? s_cachedMetadata;
     private static readonly SemaphoreSlim s_agentLock = new(1, 1);
     private static readonly ConcurrentDictionary<string, SpreadsheetArtifactContext> s_spreadsheetArtifacts = new();
+    private static readonly Regex s_spreadsheetFileIdRegex = new(
+        @"Foundry file_id[:\s]+(?<fileId>[A-Za-z0-9_-]+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_spreadsheetFileNameRegex = new(
+        @"spreadsheet\s+(?:is|attached:)\s*'(?<fileName>[^']+)'",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     // MI assertion cache (static - user-independent, safe to share across requests)
     private static ManagedIdentityClientAssertion? s_miAssertion;
 
@@ -289,7 +296,9 @@ public class AgentFrameworkService : IDisposable
 
         CreateResponseOptions options = new() { StreamingEnabled = true };
 
-        if (s_spreadsheetArtifacts.TryGetValue(conversationId, out var spreadsheetArtifactForTools))
+        var spreadsheetArtifactForTools = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken);
+
+        if (spreadsheetArtifactForTools != null)
         {
             var containerConfiguration = CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration(
                 [spreadsheetArtifactForTools.FileId]);
@@ -297,10 +306,30 @@ public class AgentFrameworkService : IDisposable
                 ResponseTool.CreateCodeInterpreterTool(
                     new CodeInterpreterToolContainer(containerConfiguration)));
 
+            // Override agent instructions to force direct code_interpreter analysis 
+            // instead of the async foundryAssessFromFileId OpenAPI tool path. 
+            // The agent's Foundry system prompt defers results to a future callback 
+            // that never arrives; this forces synchronous in-turn execution.
+            options.Instructions =
+                $"A spreadsheet named '{spreadsheetArtifactForTools.FileName}' (file_id: {spreadsheetArtifactForTools.FileId}) " +
+                "is attached to the code_interpreter tool container for this request. " +
+                "You MUST use the code_interpreter tool to read and analyze this spreadsheet directly. " +
+                "Do NOT invoke foundryAssessFromFileId or any other external tool. " +
+                "Do NOT tell the user you have 'initiated' something or that you will 'update them later'. " +
+                "Perform the complete analysis NOW and return the full results in this response. " +
+                "Start by loading the spreadsheet with pandas and summarizing its structure, then answer the user's question completely.";
+
             _logger.LogInformation(
                 "Enabled request-scoped code interpreter tool for conversation {ConversationId} with FileId={FileId}",
                 conversationId,
                 spreadsheetArtifactForTools.FileId);
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Instructions))
+        {
+            options.Instructions =
+                "Return complete results in this response turn. " +
+                "Do not say you will follow up later or update the user asynchronously.";
         }
 
         // Always bind to conversation — the conversation maintains MCP approval state
@@ -818,6 +847,77 @@ public class AgentFrameworkService : IDisposable
             bytes.Length);
 
         return uploaded.Value.Id;
+    }
+
+    private async Task<SpreadsheetArtifactContext?> GetSpreadsheetArtifactContextAsync(
+        string conversationId,
+        CancellationToken cancellationToken)
+    {
+        if (s_spreadsheetArtifacts.TryGetValue(conversationId, out var cachedArtifact))
+        {
+            return cachedArtifact;
+        }
+
+        try
+        {
+            await foreach (var item in GetProjectClient().OpenAI.Conversations.GetProjectConversationItemsAsync(
+                conversationId,
+                itemKind: AgentResponseItemKind.Message,
+                cancellationToken: cancellationToken))
+            {
+                var responseItem = item.AsResponseResultItem();
+                if (responseItem is not MessageResponseItem messageItem)
+                {
+                    continue;
+                }
+
+                var text = string.Join("", messageItem.Content
+                    .Where(c => c.Text != null)
+                    .Select(c => c.Text));
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    continue;
+                }
+
+                var fileIdMatch = s_spreadsheetFileIdRegex.Match(text);
+                if (!fileIdMatch.Success)
+                {
+                    continue;
+                }
+
+                var fileId = fileIdMatch.Groups["fileId"].Value;
+                if (string.IsNullOrWhiteSpace(fileId))
+                {
+                    continue;
+                }
+
+                var fileNameMatch = s_spreadsheetFileNameRegex.Match(text);
+                var fileName = fileNameMatch.Success
+                    ? fileNameMatch.Groups["fileName"].Value
+                    : "spreadsheet.xlsx";
+
+                var restoredArtifact = new SpreadsheetArtifactContext(fileId, fileName);
+                s_spreadsheetArtifacts[conversationId] = restoredArtifact;
+
+                _logger.LogInformation(
+                    "Restored spreadsheet artifact context from conversation history: ConversationId={ConversationId}, FileId={FileId}, FileName={FileName}",
+                    conversationId,
+                    restoredArtifact.FileId,
+                    restoredArtifact.FileName);
+
+                return restoredArtifact;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Unable to restore spreadsheet artifact context from conversation history for {ConversationId}",
+                conversationId);
+        }
+
+        return null;
     }
 
     /// <summary>
