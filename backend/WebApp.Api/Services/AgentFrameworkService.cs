@@ -52,6 +52,9 @@ public class AgentFrameworkService : IDisposable
     private static readonly Regex s_spreadsheetFileNameRegex = new(
         @"spreadsheet\s+(?:is|attached:)\s*'(?<fileName>[^']+)'",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex s_spreadsheetUnavailableRegex = new(
+        @"(re-?upload|not\s+found|cannot\s+access|could\s+not\s+find).*(xlsx|xls|spreadsheet|file)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     // MI assertion cache (static - user-independent, safe to share across requests)
     private static ManagedIdentityClientAssertion? s_miAssertion;
 
@@ -399,6 +402,7 @@ public class AgentFrameworkService : IDisposable
         var fileSearchQuotes = new Dictionary<string, string>();
         // Track the current response ID for MCP approval resume flow
         string? currentResponseId = null;
+        var hasSpreadsheetContext = await GetSpreadsheetArtifactContextAsync(conversationId, cancellationToken) != null;
 
         var updateCount = 0;
 
@@ -527,6 +531,29 @@ public class AgentFrameworkService : IDisposable
                         _logger.LogInformation("Extracted {Count} annotations from response", annotations.Count);
                         yield return StreamChunk.WithAnnotations(annotations);
                     }
+
+                    if (hasSpreadsheetContext && itemDoneUpdate.Item is MessageResponseItem messageResponseItem)
+                    {
+                        var responseText = string.Join(
+                            "",
+                            messageResponseItem.Content
+                                .Where(c => !string.IsNullOrEmpty(c.Text))
+                                .Select(c => c.Text));
+
+                        if (!string.IsNullOrWhiteSpace(responseText)
+                            && s_spreadsheetUnavailableRegex.IsMatch(responseText))
+                        {
+                            var snippet = responseText.Length <= 240
+                                ? responseText
+                                : responseText[..240] + "...";
+
+                            _logger.LogWarning(
+                                "Assistant reported spreadsheet unavailable despite spreadsheet context. ConversationId={ConversationId}, ResponseId={ResponseId}, Snippet={Snippet}",
+                                conversationId,
+                                currentResponseId,
+                                snippet);
+                        }
+                    }
                 }
                 else if (update is StreamingResponseOutputItemAddedUpdate itemAddedUpdate)
                 {
@@ -565,6 +592,13 @@ public class AgentFrameworkService : IDisposable
                 else if (update is StreamingResponseCodeInterpreterCallInterpretingUpdate)
                 {
                     _logger.LogDebug("Code interpreter interpreting");
+                }
+                else if (string.Equals(
+                    update.GetType().Name,
+                    "StreamingResponseCodeInterpreterCallCompletedUpdate",
+                    StringComparison.Ordinal))
+                {
+                    _logger.LogDebug("Code interpreter call completed");
                 }
 
 
