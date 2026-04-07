@@ -151,6 +151,7 @@ function createDownloadableComponents(
   }
 
   const DownloadLink: Components['a'] = ({ href, children }) => {
+    // sandbox: links — look up by filename in annotation map
     if (!href || href.startsWith('sandbox:')) {
       const match = href ? findAnnotationByFilename(href, annotationMap) : undefined;
       if (match?.fileId && onDownloadFile) {
@@ -166,6 +167,22 @@ function createDownloadableComponents(
         );
       }
       return <span className={styles.link}>{children}</span>;
+    }
+    // Bare filename links (no scheme, e.g. "report.xlsx") — look up annotation by filename
+    if (!href.startsWith('http://') && !href.startsWith('https://') && !href.startsWith('/') && !href.startsWith('#')) {
+      const match = findAnnotationByFilename(href, annotationMap);
+      if (match?.fileId && onDownloadFile) {
+        return (
+          <a
+            href="#"
+            className={styles.link}
+            aria-label={`Download ${match.label}`}
+            onClick={(e) => { e.preventDefault(); onDownloadFile(match.fileId!, match.label, match.containerId); }}
+          >
+            {children}
+          </a>
+        );
+      }
     }
     return (
       <a href={href} className={styles.link} target="_blank" rel="noopener noreferrer">
