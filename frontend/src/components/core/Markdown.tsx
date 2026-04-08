@@ -32,6 +32,32 @@ interface CodeBlockProps
   inline?: boolean;
 }
 
+function ensureWorkbookLink(content: string): string {
+  if (!content) return '';
+
+  // If a proper markdown workbook link already exists, keep content unchanged.
+  if (/\[[^\]]+\]\((?:https?:\/\/|\/)[^)]+\.xlsx(?:\?[^)]*)?\)/i.test(content)) {
+    return content;
+  }
+
+  // Extract workbook name from text-fragment URLs like
+  // https://host/#:~:text=Azure_AWS_GCP_UKWest_Cost_Comparison.xlsx
+  const fragmentMatch = content.match(/#:~:text=([^\s)]+?\.xlsx)/i);
+  if (fragmentMatch?.[1]) {
+    const filename = decodeURIComponent(fragmentMatch[1]).split(',')[0];
+    return `${content}\n\n[Download Excel Report](/mnt/data/${filename})`;
+  }
+
+  // Extract workbook path if model prints /mnt/data/<file>.xlsx as plain text.
+  const sandboxPathMatch = content.match(/\/mnt\/data\/([^\s)]+?\.xlsx)/i);
+  if (sandboxPathMatch?.[1]) {
+    const filename = sandboxPathMatch[1];
+    return `${content}\n\n[Download Excel Report](/mnt/data/${filename})`;
+  }
+
+  return content;
+}
+
 // Custom paragraph component - render inline for chat messages
 const Paragraph: Components['p'] = ({ children }) => {
   return <span className={styles.paragraph}>{children} </span>;
@@ -321,9 +347,11 @@ function ContentWithCitations({
   onCitationClick?: (index: number, annotation?: IAnnotation) => void;
   onDownloadFile?: (fileId: string, fileName: string, containerId?: string) => void;
 }) {
+  const normalizedContent = useMemo(() => ensureWorkbookLink(content), [content]);
+
   const parsed = useMemo(
-    () => parseContentWithCitations(content, annotations),
-    [content, annotations]
+    () => parseContentWithCitations(normalizedContent, annotations),
+    [normalizedContent, annotations]
   );
 
   // Build components with download support for sandbox: URLs.
@@ -345,7 +373,7 @@ function ContentWithCitations({
         rehypePlugins={[rehypeSanitizeConfig]}
         components={{ p: Paragraph, ...components }}
       >
-        {content}
+        {normalizedContent}
       </ReactMarkdown>
     );
   }
