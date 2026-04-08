@@ -140,12 +140,18 @@ function createDownloadableComponents(
   annotations?: IAnnotation[],
   onDownloadFile?: (fileId: string, fileName: string, containerId?: string) => void,
 ) {
-  // Pre-compute filename → annotation map for O(1) lookups
+  // Pre-compute filename → annotation map for O(1) lookups.
+  // Label for file_path annotations is the OpenAI file_id (e.g. "file-abc123"), NOT the
+  // human filename, so a separate list of file_path entries is kept as a fallback.
   const annotationMap = new Map<string, IAnnotation>();
+  const filePathAnnotations: IAnnotation[] = [];
   if (annotations) {
     for (const a of annotations) {
       if ((a.type === 'container_file_citation' || a.type === 'file_path') && a.fileId && a.label) {
         annotationMap.set(a.label.toLowerCase(), a);
+      }
+      if (a.type === 'file_path' && a.fileId) {
+        filePathAnnotations.push(a);
       }
     }
   }
@@ -155,6 +161,7 @@ function createDownloadableComponents(
     if (!href || href.startsWith('sandbox:')) {
       const match = href ? findAnnotationByFilename(href, annotationMap) : undefined;
       if (match?.fileId && onDownloadFile) {
+        // Matched annotation with fileId — preferred path
         return (
           <a
             href="#"
@@ -165,6 +172,24 @@ function createDownloadableComponents(
             {children}
           </a>
         );
+      }
+      // Filename lookup failed — the label is the OpenAI file_id, not the human filename.
+      // Fall back to the first file_path annotation with a real fileId.
+      if (href && onDownloadFile) {
+        const filename = href.split('/').pop() ?? href;
+        const fallback = filePathAnnotations[0];
+        if (fallback?.fileId) {
+          return (
+            <a
+              href="#"
+              className={styles.link}
+              aria-label={`Download ${filename}`}
+              onClick={(e) => { e.preventDefault(); onDownloadFile(fallback.fileId!, filename); }}
+            >
+              {children}
+            </a>
+          );
+        }
       }
       return <span className={styles.link}>{children}</span>;
     }
@@ -289,9 +314,11 @@ function ContentWithCitations({
     [content, annotations]
   );
 
-  // Build components with download support for sandbox: URLs
+  // Build components with download support for sandbox: URLs.
+  // Activate DownloadLink whenever onDownloadFile is defined — even if there are
+  // no pre-parsed annotations (e.g. code_interpreter files arrive without them).
   const components = useMemo(() => {
-    if (onDownloadFile && annotations?.length) {
+    if (onDownloadFile) {
       const downloadable = createDownloadableComponents(annotations, onDownloadFile);
       return { ...baseComponents, ...downloadable };
     }
