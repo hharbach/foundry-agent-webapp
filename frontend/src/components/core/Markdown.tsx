@@ -55,6 +55,18 @@ function ensureWorkbookLink(content: string, annotations?: IAnnotation[]): strin
     return `${content}\n\n[Download Excel Report](/mnt/data/${filename})`;
   }
 
+  // If model outputs plain text like "Download CloudCostComparison_UKWest.xlsx"
+  // (without markdown link), synthesize a clickable fallback link.
+  const namedDownloadMatch = content.match(/download\s+([A-Za-z0-9._-]+\.xlsx)\b/i);
+  if (namedDownloadMatch?.[1]) {
+    const filename = namedDownloadMatch[1];
+    const alreadyLinked = new RegExp(`\\[[^\\]]*${filename}[^\\]]*\\]\\([^)]*\\)`, 'i').test(content)
+      || new RegExp(`/mnt/data/${filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(content);
+    if (!alreadyLinked) {
+      return `${content}\n\n[Download ${filename}](/mnt/data/${filename})`;
+    }
+  }
+
   // If response contains plain download text but no markdown link, synthesize one
   // from the first workbook-like annotation label.
   const hasPlainDownloadText = /download\s+excel\s+report/i.test(content);
