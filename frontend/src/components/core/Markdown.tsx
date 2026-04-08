@@ -32,7 +32,7 @@ interface CodeBlockProps
   inline?: boolean;
 }
 
-function ensureWorkbookLink(content: string): string {
+function ensureWorkbookLink(content: string, annotations?: IAnnotation[]): string {
   if (!content) return '';
 
   // If a proper markdown workbook link already exists, keep content unchanged.
@@ -53,6 +53,19 @@ function ensureWorkbookLink(content: string): string {
   if (sandboxPathMatch?.[1]) {
     const filename = sandboxPathMatch[1];
     return `${content}\n\n[Download Excel Report](/mnt/data/${filename})`;
+  }
+
+  // If response contains plain download text but no markdown link, synthesize one
+  // from the first workbook-like annotation label.
+  const hasPlainDownloadText = /download\s+excel\s+report/i.test(content);
+  if (hasPlainDownloadText) {
+    const annotationFilename = annotations
+      ?.map((a) => a.label)
+      .find((label) => /\.xlsx$/i.test(label));
+
+    if (annotationFilename) {
+      return `${content}\n\n[Download Excel Report](/mnt/data/${annotationFilename})`;
+    }
   }
 
   return content;
@@ -349,7 +362,10 @@ function ContentWithCitations({
   onCitationClick?: (index: number, annotation?: IAnnotation) => void;
   onDownloadFile?: (fileId: string, fileName: string, containerId?: string) => void;
 }) {
-  const normalizedContent = useMemo(() => ensureWorkbookLink(content), [content]);
+  const normalizedContent = useMemo(
+    () => ensureWorkbookLink(content, annotations),
+    [content, annotations]
+  );
 
   const parsed = useMemo(
     () => parseContentWithCitations(normalizedContent, annotations),
