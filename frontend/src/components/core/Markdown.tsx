@@ -195,8 +195,10 @@ function createDownloadableComponents(
   }
 
   const DownloadLink: Components['a'] = ({ href, children }) => {
-    // sandbox: links — look up by filename in annotation map
-    if (!href || href.startsWith('sandbox:')) {
+    const isSandboxLike = !href || href.startsWith('sandbox:') || href.startsWith('/mnt/data/');
+
+    // sandbox-like links — look up by filename in annotation map
+    if (isSandboxLike) {
       const match = href ? findAnnotationByFilename(href, annotationMap) : undefined;
       if (match?.fileId && onDownloadFile) {
         // Matched annotation with fileId — preferred path
