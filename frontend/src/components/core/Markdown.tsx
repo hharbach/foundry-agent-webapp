@@ -130,9 +130,18 @@ const Image: Components['img'] = ({ src, alt }) => {
 };
 
 /** Find an annotation whose label matches the filename in a sandbox: URL */
+function normalizeFilename(value: string): string {
+  const withoutQuery = value.split('?')[0].split('#')[0];
+  const basename = withoutQuery.split('/').pop() ?? withoutQuery;
+  try {
+    return decodeURIComponent(basename).trim().toLowerCase();
+  } catch {
+    return basename.trim().toLowerCase();
+  }
+}
+
 function findAnnotationByFilename(sandboxUrl: string, annotationMap: Map<string, IAnnotation>): IAnnotation | undefined {
-  const filename = sandboxUrl.split('/').pop()?.toLowerCase();
-  return filename ? annotationMap.get(filename) : undefined;
+  return annotationMap.get(normalizeFilename(sandboxUrl));
 }
 
 /** Create Link/Image components that trigger file downloads for sandbox: URLs */
@@ -148,7 +157,10 @@ function createDownloadableComponents(
   if (annotations) {
     for (const a of annotations) {
       if ((a.type === 'container_file_citation' || a.type === 'file_path') && a.fileId && a.label) {
-        annotationMap.set(a.label.toLowerCase(), a);
+        const labelKey = normalizeFilename(a.label);
+        if (labelKey) {
+          annotationMap.set(labelKey, a);
+        }
       }
       if (a.type === 'file_path' && a.fileId) {
         filePathAnnotations.push(a);
@@ -164,7 +176,7 @@ function createDownloadableComponents(
         // Matched annotation with fileId — preferred path
         return (
           <a
-            href="#"
+            href={href}
             className={styles.link}
             aria-label={`Download ${match.label}`}
             onClick={(e) => { e.preventDefault(); onDownloadFile(match.fileId!, match.label, match.containerId); }}
@@ -176,12 +188,12 @@ function createDownloadableComponents(
       // Filename lookup failed — the label is the OpenAI file_id, not the human filename.
       // Fall back to the first file_path annotation with a real fileId.
       if (href && onDownloadFile) {
-        const filename = href.split('/').pop() ?? href;
+        const filename = normalizeFilename(href) || href;
         const fallback = filePathAnnotations[0];
         if (fallback?.fileId) {
           return (
             <a
-              href="#"
+              href={href}
               className={styles.link}
               aria-label={`Download ${filename}`}
               onClick={(e) => { e.preventDefault(); onDownloadFile(fallback.fileId!, filename); }}
@@ -199,7 +211,7 @@ function createDownloadableComponents(
       if (match?.fileId && onDownloadFile) {
         return (
           <a
-            href="#"
+            href={href}
             className={styles.link}
             aria-label={`Download ${match.label}`}
             onClick={(e) => { e.preventDefault(); onDownloadFile(match.fileId!, match.label, match.containerId); }}
