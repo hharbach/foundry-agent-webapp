@@ -78,6 +78,7 @@ if (Test-Path $rootEnvFile) {
 
 if ($portalEndpoint -or $portalAgentId -or $portalResourceId) {
     Write-Host "Mapping portal variables (AZURE_EXISTING_*)..." -ForegroundColor Cyan
+    Write-Host "[INFO] Portal endpoint present: $([bool]$portalEndpoint), portal agent id present: $([bool]$portalAgentId), portal resource id present: $([bool]$portalResourceId)" -ForegroundColor DarkGray
 
     if ($portalEndpoint) {
         $currentEndpoint = (azd env get-value AI_AGENT_ENDPOINT 2>&1) | Where-Object { $_ -notmatch 'ERROR' } | Select-Object -First 1
@@ -88,20 +89,23 @@ if ($portalEndpoint -or $portalAgentId -or $portalResourceId) {
     }
 
     if ($portalAgentId) {
-        $currentAgentId = (azd env get-value AI_AGENT_ID 2>&1) | Where-Object { $_ -notmatch 'ERROR' } | Select-Object -First 1
-        if ([string]::IsNullOrWhiteSpace($currentAgentId)) {
-            # Portal format is "name:version" (e.g. "dadjokes:2") — split and map
-            # If no version suffix, AI_AGENT_VERSION remains unset (defaults to latest)
-            $parts = $portalAgentId -split ':', 2
-            $agentName = $parts[0].Trim()
-            azd env set AI_AGENT_ID $agentName
-            Write-Host "[OK] Mapped AZURE_EXISTING_AGENT_ID -> AI_AGENT_ID=$agentName" -ForegroundColor Green
+        # Always sync portal agent ID to runtime agent settings.
+        # Portal format is "name:version" (e.g. "dadjokes:2").
+        # If no version suffix is present, clear AI_AGENT_VERSION so runtime uses latest.
+        $parts = $portalAgentId -split ':', 2
+        $agentName = $parts[0].Trim()
+        $agentVersion = if ($parts.Count -gt 1) { $parts[1].Trim() } else { '' }
 
-            $agentVersion = if ($parts.Count -gt 1) { $parts[1].Trim() } else { '' }
-            if ($agentVersion) {
-                azd env set AI_AGENT_VERSION $agentVersion
-                Write-Host "[OK] Mapped agent version -> AI_AGENT_VERSION=$agentVersion" -ForegroundColor Green
-            }
+        azd env set AI_AGENT_ID $agentName
+        Write-Host "[OK] Synced AZURE_EXISTING_AGENT_ID -> AI_AGENT_ID=$agentName" -ForegroundColor Green
+
+        if ($agentVersion) {
+            azd env set AI_AGENT_VERSION $agentVersion
+            Write-Host "[OK] Synced agent version -> AI_AGENT_VERSION=$agentVersion" -ForegroundColor Green
+        }
+        else {
+            azd env set AI_AGENT_VERSION ""
+            Write-Host "[OK] Cleared AI_AGENT_VERSION (no version suffix provided; runtime will use latest)" -ForegroundColor Green
         }
     }
 

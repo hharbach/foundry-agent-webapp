@@ -254,6 +254,15 @@ public class AgentFrameworkService : IDisposable
                 definition?.Model ?? "unknown",
                 agentVersion?.Version ?? "latest");
 
+            if (!string.IsNullOrWhiteSpace(_agentVersion) && !string.Equals(agentVersion?.Version, _agentVersion, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning(
+                    "Configured AI_AGENT_VERSION={ConfiguredVersion} differs from loaded metadata version={LoadedVersion}. " +
+                    "Responses API calls will still use configured AgentReference version.",
+                    _agentVersion,
+                    agentVersion?.Version ?? "latest");
+            }
+
             // Log StructuredInputs at debug level for troubleshooting
             if (definition?.StructuredInputs != null && definition.StructuredInputs.Count > 0)
             {
