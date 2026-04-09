@@ -93,7 +93,29 @@ function ensureWorkbookLink(content: string, annotations?: IAnnotation[]): strin
   if (hasPlainDownloadText) {
     const filename = inferWorkbookFilename();
     if (filename) {
-      return `${content}\n\n[Download Excel Report](sandbox:/mnt/data/${filename})`;
+      const linkTarget = `sandbox:/mnt/data/${filename}`;
+      let rewritten = content;
+
+      // Replace common plain-text download phrases inline so they become hot links.
+      rewritten = rewritten.replace(
+        /Download the cost comparison (?:Excel )?workbook/gi,
+        `[Download the cost comparison Excel workbook](${linkTarget})`
+      );
+      rewritten = rewritten.replace(
+        /Download the Cost Comparison Template/gi,
+        `[Download the Cost Comparison Template](${linkTarget})`
+      );
+      rewritten = rewritten.replace(
+        /Download Excel Report/gi,
+        `[Download Excel Report](${linkTarget})`
+      );
+
+      // If phrases were not present, append one guaranteed clickable fallback.
+      if (rewritten === content) {
+        rewritten = `${content}\n\n[Download Excel Report](${linkTarget})`;
+      }
+
+      return rewritten;
     }
   }
 
