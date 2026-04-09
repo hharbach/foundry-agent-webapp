@@ -65,14 +65,14 @@ function ensureWorkbookLink(content: string, annotations?: IAnnotation[]): strin
   const fragmentMatch = content.match(/#:~:text=([^\s)]+?\.xlsx)/i);
   if (fragmentMatch?.[1]) {
     const filename = decodeURIComponent(fragmentMatch[1]).split(',')[0];
-    return `${content}\n\n[Download Excel Report](/mnt/data/${filename})`;
+    return `${content}\n\n[Download Excel Report](sandbox:/mnt/data/${filename})`;
   }
 
   // Extract workbook path if model prints /mnt/data/<file>.xlsx as plain text.
   const sandboxPathMatch = content.match(/\/mnt\/data\/([^\s)]+?\.xlsx)/i);
   if (sandboxPathMatch?.[1]) {
     const filename = sandboxPathMatch[1];
-    return `${content}\n\n[Download Excel Report](/mnt/data/${filename})`;
+    return `${content}\n\n[Download Excel Report](sandbox:/mnt/data/${filename})`;
   }
 
   // If model outputs plain text like "Download CloudCostComparison_UKWest.xlsx"
@@ -81,9 +81,9 @@ function ensureWorkbookLink(content: string, annotations?: IAnnotation[]): strin
   if (namedDownloadMatch?.[1]) {
     const filename = namedDownloadMatch[1];
     const alreadyLinked = new RegExp(`\\[[^\\]]*${filename}[^\\]]*\\]\\([^)]*\\)`, 'i').test(content)
-      || new RegExp(`/mnt/data/${filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(content);
+      || new RegExp(`sandbox:/mnt/data/${filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(content);
     if (!alreadyLinked) {
-      return `${content}\n\n[Download ${filename}](/mnt/data/${filename})`;
+      return `${content}\n\n[Download ${filename}](sandbox:/mnt/data/${filename})`;
     }
   }
 
@@ -93,7 +93,7 @@ function ensureWorkbookLink(content: string, annotations?: IAnnotation[]): strin
   if (hasPlainDownloadText) {
     const filename = inferWorkbookFilename();
     if (filename) {
-      return `${content}\n\n[Download Excel Report](/mnt/data/${filename})`;
+      return `${content}\n\n[Download Excel Report](sandbox:/mnt/data/${filename})`;
     }
   }
 
@@ -355,6 +355,10 @@ const rehypeSanitizeConfig = [
     attributes: {
       ...defaultSchema.attributes,
       code: [['className', /^language-./]],
+    },
+    protocols: {
+      ...(defaultSchema.protocols ?? {}),
+      href: [...((defaultSchema.protocols?.href as string[] | undefined) ?? []), 'sandbox'],
     },
   },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
