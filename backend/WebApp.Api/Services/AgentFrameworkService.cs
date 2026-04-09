@@ -668,16 +668,25 @@ public class AgentFrameworkService : IDisposable
 
                 if (!string.IsNullOrWhiteSpace(recoveredText))
                 {
-                    yield return StreamChunk.Text(recoveredText);
+                    foreach (var normalizedChunk in BuildSpreadsheetDownloadChunks(recoveredText, spreadsheetArtifactContext!))
+                    {
+                        yield return normalizedChunk;
+                    }
                 }
                 else if (bufferedSpreadsheetText is { Length: > 0 })
                 {
-                    yield return StreamChunk.Text(bufferedSpreadsheetText.ToString());
+                    foreach (var normalizedChunk in BuildSpreadsheetDownloadChunks(bufferedSpreadsheetText.ToString(), spreadsheetArtifactContext!))
+                    {
+                        yield return normalizedChunk;
+                    }
                 }
             }
             else if (bufferedSpreadsheetText is { Length: > 0 })
             {
-                yield return StreamChunk.Text(bufferedSpreadsheetText.ToString());
+                foreach (var normalizedChunk in BuildSpreadsheetDownloadChunks(bufferedSpreadsheetText.ToString(), spreadsheetArtifactContext!))
+                {
+                    yield return normalizedChunk;
+                }
             }
         }
 
@@ -686,6 +695,57 @@ public class AgentFrameworkService : IDisposable
             conversationId,
             updateCount,
             !string.IsNullOrEmpty(currentResponseId));
+    }
+
+    private IEnumerable<StreamChunk> BuildSpreadsheetDownloadChunks(string rawText, SpreadsheetArtifactContext spreadsheetArtifact)
+    {
+        var text = rawText?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            yield break;
+        }
+
+        var fileName = spreadsheetArtifact.FileName;
+        var linkTarget = $"sandbox:/mnt/data/{fileName}";
+
+        // Replace common plain-text download phrases with explicit markdown links.
+        var normalized = text;
+        normalized = Regex.Replace(
+            normalized,
+            @"Download the cost comparison (?:Excel )?workbook",
+            $"[Download the cost comparison Excel workbook]({linkTarget})",
+            RegexOptions.IgnoreCase);
+        normalized = Regex.Replace(
+            normalized,
+            @"Download the Cost Comparison Template",
+            $"[Download the Cost Comparison Template]({linkTarget})",
+            RegexOptions.IgnoreCase);
+        normalized = Regex.Replace(
+            normalized,
+            @"Download Excel Report",
+            $"[Download Excel Report]({linkTarget})",
+            RegexOptions.IgnoreCase);
+
+        // Ensure at least one actionable markdown download link exists.
+        var hasMarkdownLink = Regex.IsMatch(normalized, @"\[[^\]]+\]\((?:sandbox:/mnt/data/|/mnt/data/|https?://)[^)]+\)", RegexOptions.IgnoreCase);
+        if (!hasMarkdownLink)
+        {
+            normalized += $"\n\n[Download Excel Report]({linkTarget})";
+        }
+
+        // Emit a synthetic file annotation so frontend can resolve sandbox links to fileId
+        // through onDownloadFile() with authenticated backend fetch.
+        yield return StreamChunk.WithAnnotations(new List<AnnotationInfo>
+        {
+            new()
+            {
+                Type = "file_path",
+                Label = fileName,
+                FileId = spreadsheetArtifact.FileId
+            }
+        });
+
+        yield return StreamChunk.Text(normalized);
     }
 
     private async Task<string> RunSpreadsheetRecoveryRetryAsync(
