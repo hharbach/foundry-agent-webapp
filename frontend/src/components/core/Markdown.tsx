@@ -35,6 +35,26 @@ interface CodeBlockProps
 function ensureWorkbookLink(content: string, annotations?: IAnnotation[]): string {
   if (!content) return '';
 
+  const inferWorkbookFilename = (): string | undefined => {
+    // 1) explicit workbook path
+    const sandboxPathMatch = content.match(/\/mnt\/data\/([^\s)]+?\.xlsx)/i);
+    if (sandboxPathMatch?.[1]) return sandboxPathMatch[1];
+
+    // 2) workbook-like file names anywhere in text (including quoted names)
+    const filenameMatches = Array.from(content.matchAll(/([A-Za-z0-9._-]+\.xlsx)\b/gi));
+    if (filenameMatches.length > 0) {
+      return filenameMatches[0][1];
+    }
+
+    // 3) annotation labels that include a workbook name
+    const annotationFilename = annotations
+      ?.map((a) => a.label)
+      .find((label) => /\.xlsx$/i.test(label));
+    if (annotationFilename) return annotationFilename;
+
+    return undefined;
+  };
+
   // If a proper markdown workbook link already exists, keep content unchanged.
   if (/\[[^\]]+\]\((?:https?:\/\/|\/)[^)]+\.xlsx(?:\?[^)]*)?\)/i.test(content)) {
     return content;
@@ -67,16 +87,13 @@ function ensureWorkbookLink(content: string, annotations?: IAnnotation[]): strin
     }
   }
 
-  // If response contains plain download text but no markdown link, synthesize one
-  // from the first workbook-like annotation label.
-  const hasPlainDownloadText = /download\s+excel\s+report/i.test(content);
+  // If response contains plain download callouts but no markdown URL, synthesize
+  // one link for the workbook inferred from text/annotations.
+  const hasPlainDownloadText = /download\s+(?:the\s+cost\s+comparison\s+template|excel\s+report)/i.test(content);
   if (hasPlainDownloadText) {
-    const annotationFilename = annotations
-      ?.map((a) => a.label)
-      .find((label) => /\.xlsx$/i.test(label));
-
-    if (annotationFilename) {
-      return `${content}\n\n[Download Excel Report](/mnt/data/${annotationFilename})`;
+    const filename = inferWorkbookFilename();
+    if (filename) {
+      return `${content}\n\n[Download Excel Report](/mnt/data/${filename})`;
     }
   }
 
