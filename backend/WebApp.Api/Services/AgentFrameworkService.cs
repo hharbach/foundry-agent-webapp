@@ -712,7 +712,7 @@ public class AgentFrameworkService : IDisposable
         // If the model outputs reportXlsxUrl as plain JSON/text, convert it to a clickable markdown link.
         var reportUrlMatch = Regex.Match(
             normalized,
-            @"\breportXlsxUrl\b\s*[:=]\s*[\"']?(https?://[^\s\"'\)]+)",
+            "\\breportXlsxUrl\\b\\s*[:=]\\s*[\"']?(https?://[^\\s\"'\\)]+)",
             RegexOptions.IgnoreCase);
         if (reportUrlMatch.Success)
         {
