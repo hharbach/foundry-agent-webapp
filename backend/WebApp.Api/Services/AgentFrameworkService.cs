@@ -699,51 +699,29 @@ public class AgentFrameworkService : IDisposable
 
     private IEnumerable<StreamChunk> BuildSpreadsheetDownloadChunks(string rawText, SpreadsheetArtifactContext spreadsheetArtifact)
     {
+        _ = spreadsheetArtifact;
+
         var text = rawText?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(text))
         {
             yield break;
         }
 
-        var fileName = spreadsheetArtifact.FileName;
-        var linkTarget = $"sandbox:/mnt/data/{fileName}";
-
-        // Replace common plain-text download phrases with explicit markdown links.
         var normalized = text;
-        normalized = Regex.Replace(
-            normalized,
-            @"Download the cost comparison (?:Excel )?workbook",
-            $"[Download the cost comparison Excel workbook]({linkTarget})",
-            RegexOptions.IgnoreCase);
-        normalized = Regex.Replace(
-            normalized,
-            @"Download the Cost Comparison Template",
-            $"[Download the Cost Comparison Template]({linkTarget})",
-            RegexOptions.IgnoreCase);
-        normalized = Regex.Replace(
-            normalized,
-            @"Download Excel Report",
-            $"[Download Excel Report]({linkTarget})",
-            RegexOptions.IgnoreCase);
 
-        // Ensure at least one actionable markdown download link exists.
-        var hasMarkdownLink = Regex.IsMatch(normalized, @"\[[^\]]+\]\((?:sandbox:/mnt/data/|/mnt/data/|https?://)[^)]+\)", RegexOptions.IgnoreCase);
-        if (!hasMarkdownLink)
+        // If the model outputs reportXlsxUrl as plain JSON/text, convert it to a clickable markdown link.
+        var reportUrlMatch = Regex.Match(
+            normalized,
+            @"\breportXlsxUrl\b\s*[:=]\s*[\"']?(https?://[^\s\"'\)]+)",
+            RegexOptions.IgnoreCase);
+        if (reportUrlMatch.Success)
         {
-            normalized += $"\n\n[Download Excel Report]({linkTarget})";
-        }
-
-        // Emit a synthetic file annotation so frontend can resolve sandbox links to fileId
-        // through onDownloadFile() with authenticated backend fetch.
-        yield return StreamChunk.WithAnnotations(new List<AnnotationInfo>
-        {
-            new()
+            var reportUrl = reportUrlMatch.Groups[1].Value.Trim();
+            if (!string.IsNullOrWhiteSpace(reportUrl))
             {
-                Type = "file_path",
-                Label = fileName,
-                FileId = spreadsheetArtifact.FileId
+                normalized += $"\n\n[Download Excel Report]({reportUrl})";
             }
-        });
+        }
 
         yield return StreamChunk.Text(normalized);
     }
@@ -760,7 +738,8 @@ public class AgentFrameworkService : IDisposable
             options.InputItems.Add(ResponseItem.CreateUserMessageItem(
                 "The previous assistant response incorrectly reported the spreadsheet as inaccessible. " +
                 $"The spreadsheet is available as Foundry file_id {spreadsheetArtifact.FileId} (name: {spreadsheetArtifact.FileName}). " +
-                "Use code_interpreter now and answer the request directly with concrete results. " +
+                "Call foundryAssessFromFileId now using this file_id and the user's confirmed parameters. " +
+                "Return a markdown link built from reportXlsxUrl exactly as [Download Excel Report](reportXlsxUrl). " +
                 "Do not ask for re-upload and do not mention file accessibility limitations.\n" +
                 $"Original user request: {originalUserMessage}"));
 
@@ -900,8 +879,9 @@ public class AgentFrameworkService : IDisposable
             ? message
             : message +
               $"\n\nConversation context: the current spreadsheet is '{spreadsheetArtifact.FileName}' with Foundry file_id {spreadsheetArtifact.FileId}. " +
-              "You MUST analyze this spreadsheet using the agent's code_interpreter capability in this response. " +
-              "Do not defer execution, do not say you will follow up later, and return complete results now.";
+                            "You MUST call foundryAssessFromFileId in this response using this file_id and the user's confirmed parameters. " +
+                            "Return the download link using reportXlsxUrl exactly as markdown [Download Excel Report](reportXlsxUrl). " +
+                            "Do not defer execution and do not use sandbox file paths.";
 
         var contentParts = new List<ResponseContentPart>
         {
@@ -1015,7 +995,8 @@ public class AgentFrameworkService : IDisposable
                     contentParts.Add(ResponseContentPart.CreateInputTextPart(
                         $"\n\nSpreadsheet attached: '{file.FileName}'. Foundry file_id: {uploadedFileId}. " +
                         "Do not attempt to read this spreadsheet as an input_file or inline document. " +
-                        "Use code_interpreter to inspect the workbook and answer the user's question directly in this response. " +
+                        "Call foundryAssessFromFileId with this file_id and the user's confirmed parameters in this response. " +
+                        "Return [Download Excel Report](reportXlsxUrl) using the exact URL from tool output. " +
                         "Do not defer execution and do not respond with 'I will update you later'. " +
                         "If key pricing assumptions are missing, ask focused follow-up questions first.\n"));
                 }
