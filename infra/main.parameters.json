@@ -23,6 +23,9 @@
     "aiAgentId": {
       "value": "${AI_AGENT_ID=}"
     },
+    "aiAgentVersion": {
+      "value": "${AI_AGENT_VERSION=}"
+    },
     "enableObo": {
       "value": "${ENABLE_OBO=false}"
     }
