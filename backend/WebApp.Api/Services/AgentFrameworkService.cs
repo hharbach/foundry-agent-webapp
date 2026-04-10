@@ -415,6 +415,10 @@ public class AgentFrameworkService : IDisposable
         var hasSpreadsheetContext = spreadsheetArtifactContext != null;
         var bufferedSpreadsheetText = hasSpreadsheetContext ? new StringBuilder() : null;
         var spreadsheetUnavailableDetected = false;
+        var foundryToolSpecValidationFailure = false;
+        const string foundryToolSpecValidationMessage =
+            "Spreadsheet processing is temporarily unavailable due to a tool configuration validation error in the deployed Foundry agent. " +
+            "Please retry shortly after the agent deployment completes.";
 
         var updateCount = 0;
 
@@ -455,11 +459,7 @@ public class AgentFrameworkService : IDisposable
                         ex,
                         "Spreadsheet streaming failed due to Foundry OpenAPI tool validation. ConversationId={ConversationId}",
                         conversationId);
-
-                    yield return StreamChunk.Text(
-                        "Spreadsheet processing is temporarily unavailable due to a tool configuration validation error in the deployed Foundry agent. " +
-                        "Please retry shortly after the agent deployment completes.");
-
+                    foundryToolSpecValidationFailure = true;
                     break;
                 }
 
@@ -664,6 +664,16 @@ public class AgentFrameworkService : IDisposable
                 {
                     _logger.LogDebug("Unhandled stream update type: {Type}", update.GetType().Name);
                 }
+        }
+
+        if (foundryToolSpecValidationFailure)
+        {
+            yield return StreamChunk.Text(foundryToolSpecValidationMessage);
+            _logger.LogInformation(
+                "Completed streaming for conversation: {ConversationId}. UpdateCount={UpdateCount}, FoundryToolSpecValidationFailure=true",
+                conversationId,
+                updateCount);
+            yield break;
         }
 
         if (hasSpreadsheetContext)
