@@ -449,6 +449,20 @@ public class AgentFrameworkService : IDisposable
             }
             catch (Exception ex)
             {
+                if (hasSpreadsheetContext && IsFoundryToolSpecValidationError(ex))
+                {
+                    _logger.LogError(
+                        ex,
+                        "Spreadsheet streaming failed due to Foundry OpenAPI tool validation. ConversationId={ConversationId}",
+                        conversationId);
+
+                    yield return StreamChunk.Text(
+                        "Spreadsheet processing is temporarily unavailable due to a tool configuration validation error in the deployed Foundry agent. " +
+                        "Please retry shortly after the agent deployment completes.");
+
+                    break;
+                }
+
                 _logger.LogError(
                     ex,
                     "Streaming failed before next update for conversation {ConversationId}",
@@ -775,6 +789,13 @@ public class AgentFrameworkService : IDisposable
                 conversationId);
             return string.Empty;
         }
+    }
+
+    private static bool IsFoundryToolSpecValidationError(Exception ex)
+    {
+        var message = ex.ToString();
+        return message.Contains("Invalid OpenAPI specification", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("tool_arguments", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
