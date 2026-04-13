@@ -419,6 +419,11 @@ public class AgentFrameworkService : IDisposable
         const string foundryToolSpecValidationMessage =
             "Spreadsheet processing is temporarily unavailable due to a tool configuration validation error in the deployed Foundry agent. " +
             "Please retry shortly after the agent deployment completes.";
+        const string foundryToolNoOutputMessage =
+            "The cloud pricing tool call did not complete successfully. " +
+            "This can happen when the tool execution times out or the conversation thread gets into an unexpected state. " +
+            "Please start a **new conversation** and retry your request.";
+        var foundryToolNoOutputDetected = false;
 
         var updateCount = 0;
 
@@ -462,6 +467,16 @@ public class AgentFrameworkService : IDisposable
                     foundryToolSpecValidationFailure = true;
                     break;
                 }
+
+                    if (IsFoundryToolNoOutputError(ex))
+                    {
+                        _logger.LogError(
+                            ex,
+                            "Foundry tool call produced no output (conversation thread stuck). ConversationId={ConversationId}",
+                            conversationId);
+                        foundryToolNoOutputDetected = true;
+                        break;
+                    }
 
                 _logger.LogError(
                     ex,
@@ -676,7 +691,17 @@ public class AgentFrameworkService : IDisposable
             yield break;
         }
 
-        if (hasSpreadsheetContext)
+            if (foundryToolNoOutputDetected)
+            {
+                yield return StreamChunk.Text(foundryToolNoOutputMessage);
+                _logger.LogInformation(
+                    "Completed streaming for conversation: {ConversationId}. UpdateCount={UpdateCount}, FoundryToolNoOutput=true",
+                    conversationId,
+                    updateCount);
+                yield break;
+            }
+
+            if (hasSpreadsheetContext)
         {
             if (spreadsheetUnavailableDetected)
             {
@@ -792,6 +817,12 @@ public class AgentFrameworkService : IDisposable
         return message.Contains("Invalid OpenAPI specification", StringComparison.OrdinalIgnoreCase)
             || message.Contains("tool_arguments", StringComparison.OrdinalIgnoreCase);
     }
+
+        private static bool IsFoundryToolNoOutputError(Exception ex)
+        {
+            var message = ex.ToString();
+            return message.Contains("No tool output found for remote function call", StringComparison.OrdinalIgnoreCase);
+        }
 
     /// <summary>
     /// Supported image MIME types for vision capabilities.
