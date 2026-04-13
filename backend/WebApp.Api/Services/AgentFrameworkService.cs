@@ -731,23 +731,8 @@ public class AgentFrameworkService : IDisposable
             yield break;
         }
 
-        var normalized = text;
-
-        // If the model outputs reportXlsxUrl as plain JSON/text, convert it to a clickable markdown link.
-        var reportUrlMatch = Regex.Match(
-            normalized,
-            "\\breportXlsxUrl\\b\\s*[:=]\\s*[\"']?(https?://[^\\s\"'\\)]+)",
-            RegexOptions.IgnoreCase);
-        if (reportUrlMatch.Success)
-        {
-            var reportUrl = reportUrlMatch.Groups[1].Value.Trim();
-            if (!string.IsNullOrWhiteSpace(reportUrl))
-            {
-                normalized += $"\n\n[Download Excel Report]({reportUrl})";
-            }
-        }
-
-        yield return StreamChunk.Text(normalized);
+        // Agent outputs plain URL text; no additional linkification needed.
+        yield return StreamChunk.Text(text);
     }
 
     private async Task<string> RunSpreadsheetRecoveryRetryAsync(
@@ -763,7 +748,7 @@ public class AgentFrameworkService : IDisposable
                 "The previous assistant response incorrectly reported the spreadsheet as inaccessible. " +
                 $"The spreadsheet is available as Foundry file_id {spreadsheetArtifact.FileId} (name: {spreadsheetArtifact.FileName}). " +
                 "Call foundryAssessFromFileId now using this file_id and the user's confirmed parameters. " +
-                "Return a markdown link built from reportXlsxUrl exactly as [Download Excel Report](reportXlsxUrl). " +
+                "Output the download URL from reportXlsxUrl as plain text in your response (do NOT wrap in markdown link syntax). " +
                 "Do not ask for re-upload and do not mention file accessibility limitations.\n" +
                 $"Original user request: {originalUserMessage}"));
 
@@ -911,7 +896,7 @@ public class AgentFrameworkService : IDisposable
             : message +
               $"\n\nConversation context: the current spreadsheet is '{spreadsheetArtifact.FileName}' with Foundry file_id {spreadsheetArtifact.FileId}. " +
                             "You MUST call foundryAssessFromFileId in this response using this file_id and the user's confirmed parameters. " +
-                            "Return the download link using reportXlsxUrl exactly as markdown [Download Excel Report](reportXlsxUrl). " +
+                            "Output the download URL from reportXlsxUrl as plain text in your response (do NOT wrap in markdown link syntax). " +
                             "Do not defer execution and do not use sandbox file paths.";
 
         var contentParts = new List<ResponseContentPart>
